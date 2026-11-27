@@ -41,7 +41,7 @@ def still(src: Path, out: Path, seconds: float, caption: Path | None) -> None:
     run(cmd)
 
 
-def clip(src: Path, out: Path, seconds: float, caption: Path | None) -> None:
+def clip(src: Path, out: Path, seconds: float, caption: Path | None, redact: tuple[int, int, int, int] | None = None) -> None:
     src_seconds = duration(src)
     pad = max(0.0, seconds - src_seconds + 0.6)
     base = (
@@ -53,10 +53,18 @@ def clip(src: Path, out: Path, seconds: float, caption: Path | None) -> None:
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", str(src)]
     if caption:
         cmd += ["-i", str(caption)]
-        filt = f"[0:v]{base}[b];[b][1:v]overlay=0:0:format=auto,format=yuv420p[v]"
+        filt = f"[0:v]{base}[b];[b][1:v]overlay=0:0"
+        if redact:
+            x, y, w, h = redact
+            filt += f",drawbox=x={x}:y={y}:w={w}:h={h}:color=0x070A0F:t=fill"
+        filt += ",format=yuv420p[v]"
         cmd += ["-filter_complex", filt, "-map", "[v]"]
     else:
-        cmd += ["-vf", base + ",format=yuv420p"]
+        vf = base
+        if redact:
+            x, y, w, h = redact
+            vf += f",drawbox=x={x}:y={y}:w={w}:h={h}:color=0x070A0F:t=fill"
+        cmd += ["-vf", vf + ",format=yuv420p"]
     cmd += ["-t", f"{seconds:.3f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", "-an", "-r", "30", str(out)]
     run(cmd)
 
@@ -74,17 +82,19 @@ def main() -> int:
         ("04-dash-before-panel", "clip", RAW / "dash-before-panel.webm", 10.0, CAPS / "caption-before.png"),
         ("05-intro", "clip", CAP / "intro.mp4", 10.0, CAPS / "caption-skill.png"),
         ("06-architecture", "clip", CAP / "architecture.mp4", 6.0, None),
-        ("07-terminal", "clip", CAP / "terminal.mp4", 38.5, None),
-        ("08-token", "clip", CAP / "token.mp4", 3.0, CAPS / "caption-token.png"),
-        ("09-receipt", "still", WORK / "receipt-panel.png", 9.0, None),
-        ("10-dash-after", "clip", RAW / "dash-after.webm", 12.0, CAPS / "caption-after.png"),
-        ("11-dash-after-panel", "clip", RAW / "dash-after-panel.webm", 12.0, CAPS / "caption-panel.png"),
-        ("12-flags-after", "clip", RAW / "flagsmith-after.webm", 14.0, CAPS / "caption-flags-after.png"),
-        ("13-agent-log", "clip", CAP / "agent-log.mp4", 13.0, None),
-        ("14-rollback", "clip", CAP / "rollback.mp4", 4.9, CAPS / "caption-rollback.png"),
-        ("99-endcard", "still", VIDEO / "stills" / "endcard.png", 6.0, None),
+        ("07-terminal-a", "clip", CAP / "terminal-a.mp4", 30.3, None),
+        ("08-terminal-b", "clip", CAP / "terminal-b.mp4", 7.5, None),
+        ("09-token", "clip", CAP / "token.mp4", 3.0, CAPS / "caption-token.png"),
+        ("10-receipt", "still", WORK / "receipt-panel.png", 9.0, None),
+        ("11-dash-after", "clip", RAW / "dash-after.webm", 12.0, CAPS / "caption-after.png"),
+        ("12-dash-after-panel", "clip", RAW / "dash-after-panel.webm", 12.0, CAPS / "caption-panel.png"),
+        ("13-flags-after", "clip", RAW / "flagsmith-after.webm", 14.0, CAPS / "caption-flags-after.png"),
+        ("14-agent-log", "clip", CAP / "agent-log.mp4", 13.0, None),
+        ("15-rollback", "clip", CAP / "rollback.mp4", 4.9, CAPS / "caption-rollback.png"),
+        ("99-endcard", "still", VIDEO / "stills" / "endcard.png", 5.0, None),
     ]
 
+    redactions = {"03-dash-before": (396, 232, 174, 30)}
     for name, kind, src, seconds, caption in specs:
         if not src.is_file():
             print(f"error: missing {src}", file=sys.stderr)
@@ -94,7 +104,7 @@ def main() -> int:
         if kind == "still":
             still(src, out, seconds, caption)
         else:
-            clip(src, out, seconds, caption)
+            clip(src, out, seconds, caption, redactions.get(name))
 
     narration = WORK / "narration.m4a"
     if not narration.is_file():
