@@ -12,6 +12,11 @@ Both drafts therefore share the same audience and collide 100%. They are left
 in status=created on purpose: Flagsmith only lets a draft experiment change its
 audience, which is exactly what the isolation workflow needs.
 
+Rerunning is convergent: active experiments on these two features (including
+running ones from a demo and [rollback] drafts) are paused/removed and replaced
+with clean drafts; stale exp_iso_* bucket segments are deleted. This avoids the
+HTTP 409 "active experiment already exists" failure on rerun.
+
 Pass --start to start them and make live enrollment measurable. Running
 experiments cannot be retargeted without pausing them first.
 

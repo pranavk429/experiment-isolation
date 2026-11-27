@@ -1,7 +1,6 @@
 ---
 name: experiment-isolation
 description: Prevent overlapping A/B experiments from contaminating each other. Use before you run another experiment, or when you suspect overlapping experiments, an experiment collision, or audience overlap. Plans mutual exclusion with deterministic bucket segments, applies only with an approval token, verifies zero overlap, and helps you isolate experiments in a local Flagsmith environment.
-compatibility: Requires this repository's Python 3.9 engine package and a local Flagsmith instance. Copy skills/experiment-isolation/ to ~/.claude/skills/experiment-isolation and set EXPERIMENT_ISOLATION_ROOT to the repo root, or run the wrapper from the repo root.
 ---
 
 # Experiment Isolation

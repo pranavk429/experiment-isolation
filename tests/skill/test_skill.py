@@ -79,9 +79,14 @@ class SkillContentTests(unittest.TestCase):
         cls.verify_section = body_section(cls.body, "### 4. Verify", "### 5. Receipt")
 
     def test_frontmatter_required_fields(self):
-        for field in ("name", "description", "compatibility"):
+        for field in ("name", "description"):
             self.assertIn(field, self.frontmatter)
             self.assertTrue(self.frontmatter[field])
+
+    def test_frontmatter_uses_only_supported_keys(self):
+        allowed = {"allowed-tools", "description", "license", "metadata", "name"}
+        self.assertTrue(set(self.frontmatter).issubset(allowed), set(self.frontmatter))
+        self.assertNotIn("compatibility", self.frontmatter)
 
     def test_name_matches_parent_directory(self):
         name = self.frontmatter["name"]
@@ -97,9 +102,6 @@ class SkillContentTests(unittest.TestCase):
         lowered = description.lower()
         for phrase in TRIGGERS:
             self.assertIn(phrase, lowered)
-
-    def test_compatibility_is_concise(self):
-        self.assertLessEqual(len(self.frontmatter["compatibility"]), 500)
 
     def test_body_line_budget(self):
         lines = self.body.splitlines()

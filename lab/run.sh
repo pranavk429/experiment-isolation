@@ -149,7 +149,7 @@ run_seed() {
 clear_evidence() {
   rm -f "$LAB_DIR/dashboard/plan.json" "$LAB_DIR/dashboard/apply.json" \
     "$LAB_DIR/dashboard/verify.json" "$LAB_DIR/dashboard/receipt.json" \
-    "$LAB_DIR"/dashboard/restore-*.json
+    "$LAB_DIR/dashboard/rollback.json" "$LAB_DIR"/dashboard/restore-*.json
 }
 
 write_sample_audit() {
@@ -309,8 +309,9 @@ print(verdict + "	" + source)
     echo "  Retry with: bash lab/run.sh audit  (see lab/.audit.err for the last error)"
   fi
   echo
-  echo "  Teardown (keep data): bash lab/run.sh down"
-  echo "  Teardown (delete):    bash lab/run.sh reset"
+  echo "  Recover clean lab:    bash lab/run.sh reset"
+  echo "  Stop (keep data):     bash lab/run.sh down"
+  echo "  Wipe only:            bash lab/run.sh reset --wipe-only"
 }
 
 cmd_up() {
@@ -451,7 +452,8 @@ cmd_reset() {
     "$LAB_DIR/seed/seed_state.json" \
     "$LAB_DIR/dashboard/audit.json" "$LAB_DIR/dashboard/plan.json" \
     "$LAB_DIR/dashboard/apply.json" "$LAB_DIR/dashboard/verify.json" \
-    "$LAB_DIR/dashboard/receipt.json" "$LAB_DIR"/dashboard/restore-*.json
+    "$LAB_DIR/dashboard/receipt.json" "$LAB_DIR/dashboard/rollback.json" \
+    "$LAB_DIR"/dashboard/restore-*.json
   if [ "$rebuild" -eq 0 ]; then
     info "Lab wiped. Start again with: bash lab/run.sh"
     return 0

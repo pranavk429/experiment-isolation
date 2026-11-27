@@ -16,7 +16,7 @@ Experiment Isolation: stop overlapping Flagsmith experiments
 
 **GitHub repository:** `TODO — public repository URL`
 
-**Live demo or deployment:** Local self-hosted lab — `bash lab/run.sh`; Flagsmith :8010, storefront :8020, dashboard :8022. No public deployment.
+**Live demo or deployment:** Local self-hosted lab — `bash lab/run.sh`; Flagsmith :8010, storefront :8020, dashboard :8022. The recorded demo uses current main-instance drafts; the lab seeds its own IDs. No public deployment.
 
 ## What did you build, and what problem does it solve?
 
@@ -25,7 +25,7 @@ Experiment Isolation is an Agent Skill, a small Python engine, and a self-hosted
 
 Two or more experiments can target the same audience. Every shared user is then exposed to multiple changes, and no result is clean. Flagsmith 2.291.0 has no mutual-exclusion primitive: an experiment audience holds one segment, and experiments can name the same segment. An audience also cannot change while its rollout is enabled, and a running experiment cannot change its audience at all.
 
-The tool audits actual enrollment from sampled identities, computes N-way Jaccard overlap across all pairs, and returns a collision verdict. Audit exits 10 on collision, by design, and still writes its JSON; above the threshold apply refuses to launch. Otherwise it proposes disjoint audiences using contiguous ranges of a stable 0-99 integer trait, requires an HMAC-bound approval token, and applies through disable-rollout → patch-audience → start (start re-enables). Apply ensures segments (creates missing, reuses existing), resamples to verify zero overlap for the planned drafts, and emits a compact receipt (121 actual tokens 2-way, 125 3-way, under o200k_base) with before/after numbers and a rollback reference. It handles up to four concurrent drafts by default with a minimum bucket width of five; the live 3-way run used [0,32], [33,65] and [66,99].
+The tool audits actual enrollment from sampled identities, computes N-way Jaccard overlap across all pairs, and returns a collision verdict. Audit exits 10 on collision, by design, and still writes its JSON; above the threshold apply refuses to launch. Otherwise it proposes disjoint audiences using contiguous ranges of a stable 0-99 integer trait, requires an HMAC-bound approval token, and applies through disable-rollout → patch-audience → start (start re-enables). Apply ensures segments (creates missing, reuses existing), resamples to verify zero overlap for the planned drafts, and emits a compact receipt (121 actual tokens for the 2-way demo; 3-way stress test 125) with before/after numbers and a rollback reference. It handles up to four concurrent drafts by default with a minimum bucket width of five; the 3-way stress run used [0,32], [33,65] and [66,99].
 
 The engine is Python 3.9 standard library only. The skill wraps it for coding agents. The lab reproduces the full loop on self-hosted Flagsmith with a seeded storefront and an overlap dashboard. All lab traffic is simulated and labeled.
 ```
@@ -73,10 +73,10 @@ It is not a single command. The skill decides when to stop for a person, refuses
 **CLI commands (exact):**
 
 ```sh
-python3 -m engine.cli audit   --env "$DEV_ENV_KEY" --samples 100 --threshold 0.05 --out audit.json
+python3 -m engine.cli audit   --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
 python3 -m engine.cli plan    --audit audit.json --max-concurrent 4 --min-bucket-width 5 --out plan.json
 python3 -m engine.cli apply   --plan plan.json --approve "<approval-token>" --out apply.json
-python3 -m engine.cli verify  --plan plan.json --samples 100 --workers 2 --out verify.json
+python3 -m engine.cli verify  --plan plan.json --samples 500 --workers 2 --out verify.json
 python3 -m engine.cli receipt --audit audit.json --plan plan.json --verify verify.json --apply apply.json --out receipt.json
 python3 -m engine.cli rollback --apply apply.json
 ```
@@ -96,7 +96,7 @@ The skill is a thin wrapper: `skills/experiment-isolation/SKILL.md` explains whe
 
 **Agent/model tested:** OpenCode general subagent, **DeepSeek V4.1 Flash 1017** (provider `opencode-go`), 2026-11-27. The skill needs only a shell and the Flagsmith CLI.
 
-**Token count for the demo run:** `TODO — harness total` (not exposed to the subagent). The measured receipt is 121 tokens (2-way) and 125 (3-way) under `o200k_base`; 120/124 under `cl100k_base`; internal estimate 108/109. Tests: 92 passed (54 engine + 38 skill). Method and include/exclude rules are in [token-count.md](token-count.md).
+**Token count for the demo run:** `TODO — harness total` (not exposed to the subagent). The measured 2-way demo receipt is 121 tokens `o200k_base` / 120 `cl100k_base`, 429 chars, internal 107. The 3-way stress test is 125/124, not the demo headline. Tests: 93 passed (55 engine + 38 skill). Method and include/exclude rules are in [token-count.md](token-count.md).
 
 **Upstream status:** packaged for contribution to the official Flagsmith skills repository. It is not merged upstream, and the submission does not claim it is.
 
@@ -107,7 +107,7 @@ The skill is a thin wrapper: `skills/experiment-isolation/SKILL.md` explains whe
 ```text
 The lab runs self-hosted Flagsmith (verified 2.291.0) with Postgres and experimentation enabled through Docker Compose: Flagsmith :8010, storefront :8020, dashboard :8022. It uses its own Compose project so it does not clash with an existing instance. No Cloud project is involved.
 
-On top of it we built a seeded storefront with two features and two colliding experiments, a single-page overlap dashboard that reads the engine's audit JSON, and one command — `bash lab/run.sh` — that starts everything and recreates the collision. The same engine can audit any self-hosted environment; the lab is the reproducible proof.
+On top of it we built a seeded storefront with two features and two colliding experiments, a single-page overlap dashboard that reads the engine's audit JSON, and one command — `bash lab/run.sh` — that starts everything and recreates the collision. The release gate verified `reset → demo → reset`: 100% → 0% → 100% collision, HTTP 200 on storefront and dashboard, no 409. The same engine can audit any self-hosted environment; the lab is the reproducible proof.
 ```
 
 **What you built:**

@@ -12,19 +12,19 @@ Start the dashboard host and prepare the terminal so the audit starts from the s
 # dashboard host: Flagsmith :8010, storefront :8020, dashboard :8022
 bash lab/run.sh
 
-# engine run: local research instance on :8000 (final drafts 49/50)
+# engine run: local research instance on :8000 (current drafts)
 source ~/flagsmith-local/flagsmith.env
 export PATH="$HOME/.cache/fstools/node_modules/.bin:$PATH"
-python3 seed/demo_seed.py --experiments 2   # reset state: drafts 49/50
+python3 seed/demo_seed.py --experiments 2   # reset state (reset may renumber)
 rm -f audit.json plan.json apply.json verify.json receipt.json refused.json
 clear
 ```
 
-Expected state: drafts **49** (`Express checkout`) and **50** (`Discount badge`), both `status=created`, audience `us_mobile`.
+Expected state: main-instance current drafts (**58/59** at release; a full reset renumbers), both `status=created`, audience `us_mobile`. The lab seeds its own IDs.
 
 Open three tabs before you start:
 
-1. Flagsmith UI at **:8000**, Experiments list, drafts 49/50 visible.
+1. Flagsmith UI at **:8000**, Experiments list, current drafts visible.
 2. The overlap dashboard at **:8022**, reading `audit.json`.
 3. This repository's README, for the close.
 
@@ -34,11 +34,11 @@ Check that no key or token is visible in the terminal prompt, scrollback, or bro
 
 ## 0:00–0:15 — Problem (15 s)
 
-**Screen:** Flagsmith Experiments list at :8000. Drafts 49/50 are visible. Hover each audience chip; both name `us_mobile`.
+**Screen:** Flagsmith Experiments list at :8000. Current drafts are visible. Hover each audience chip; both name `us_mobile`.
 
 **Say:** "Two experiments, one audience. Every user in both sees two changes, so each result depends on the other. Flagsmith has no mutual exclusion — nothing stops this launch. Teams find it after the data looks wrong."
 
-**Proof on screen:** drafts 49/50, same audience segment name. No title card, no logo.
+**Proof on screen:** current drafts, same audience segment name. No title card, no logo.
 
 ## 0:15–0:30 — What it is (15 s)
 
@@ -53,12 +53,12 @@ Check that no key or token is visible in the terminal prompt, scrollback, or bro
 **Commands:**
 
 ```sh
-python3 -m engine.cli audit --env "$DEV_ENV_KEY" --samples 100 --threshold 0.05 --out audit.json; echo "audit exit=$?"
+python3 -m engine.cli audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json; echo "audit exit=$?"
 jq '{verdict, collisions, overlaps: [.overlaps[] | {a, b, jaccard}]}' audit.json
 cp audit.json lab/dashboard/audit.json
 ```
 
-**Say:** "Audit is read-only. It samples 100 synthetic identities, persists their traits, and reads actual enrollment. Exit 10 is the collision gate, not a crash: both experiments claim the same users."
+**Say:** "Audit is read-only. It samples 500 synthetic identities, persists their traits, and reads actual enrollment. Exit 10 is the collision gate, not a crash: both experiments claim the same users."
 
 **Proof on screen:** `audit exit=10`, `verdict: "collision"`, and the measured Jaccard (acceptance target ≥ 0.9). Read the number aloud; do not pre-bake it.
 
@@ -92,14 +92,14 @@ cat apply.json
 
 **Say:** "With the plan's token, apply ensures the segments — creating missing ones, reusing existing ones — disables the rollout, patches each audience, and starts; start re-enables. Rollback is engine-owned: `engine.cli rollback --apply apply.json`."
 
-**Proof on screen:** stderr shows the running count and `segments created=… reused=…`; `apply.json` records the audience changes. The verified 2-way run reused both segments; the 3-way run created three. Keep this under 25 seconds.
+**Proof on screen:** stderr shows the running count and `segments created=… reused=…`; `apply.json` records the audience changes. The verified 2-way run reused both segments; the 3-way stress run created three. Keep this under 25 seconds.
 
 ## 1:50–2:10 — Verify (20 s)
 
 **Commands:**
 
 ```sh
-python3 -m engine.cli verify --plan plan.json --samples 100 --workers 2 --out verify.json
+python3 -m engine.cli verify --plan plan.json --samples 500 --workers 2 --out verify.json
 jq '{before_jaccard, after_jaccard, pass, overlaps: (.overlaps | length)}' verify.json
 ```
 
@@ -116,7 +116,7 @@ python3 -m engine.cli receipt --audit audit.json --plan plan.json --verify verif
 cat receipt.json
 ```
 
-**Say:** "The receipt is the handoff: before and after, changes, rollback reference, token counts, pass. It is 121 actual tokens for this 2-way run, 125 for 3-way, under `o200k_base` (120/124 cl100k). Undo with `rollback --apply`; created-only restores in place, started experiments are recreated as drafts."
+**Say:** "The receipt is the handoff: before and after, changes, rollback reference, token counts, pass. It is 121 actual tokens for this 2-way demo (120 cl100k; 429 chars; internal 107); the 3-way stress test is 125/124. Undo with `rollback --apply`; created-only restores in place, started experiments are recreated as drafts."
 
 **Proof on screen:** before/after verdicts, `changes`, rollback reference, `token_count`, `pass: true`. Do not execute rollback before the final UI shot.
 

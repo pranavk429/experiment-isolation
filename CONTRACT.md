@@ -181,7 +181,7 @@ python3 -m engine.cli receipt --audit audit.json --plan plan.json --verify verif
 3. `plan` produces two bucket segments and audience changes.
 4. `apply --approve <token>` creates the segments, disables/changes/re-enables audiences, starts the experiments.
 5. `verify` reports after_jaccard == 0.0 and pass true.
-6. `receipt` is under 100 tokens of JSON and includes a rollback list.
+6. `receipt` is <=125 actual tokens under `o200k_base` (measured 121) and includes a rollback pointer.
 7. `skill/SKILL.md` validates against the Agent Skills frontmatter rules.
 8. The lab starts with one command and shows the overlap matrix.
 

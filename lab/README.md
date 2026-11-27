@@ -308,8 +308,13 @@ on the host; do not expose them beyond your machine with the default secrets.
 - **No secrets in git.** `lab/.env` is mode 600 and ignored; `lab/.gitignore`
   also ignores runtime evidence. Bootstrap never prints a key.
 - **Explicit approval.** `apply` only runs with the plan's approval token.
-  `bash lab/run.sh` does not apply changes; `bash lab/run.sh demo` does, and is
-  clearly labelled. The engine refuses unsafe running-experiment changes.
+  `bash lab/run.sh demo` applies changes and is clearly labelled. The engine
+  refuses unsafe running-experiment changes.
+- **Lab convergence is destructive to lab state only.** Plain
+  `bash lab/run.sh` may pause/delete conflicting running or `[rollback]`
+  experiments on the two lab features, delete stale `exp_iso_*` segments, and
+  recreate clean drafts. It never touches another Flagsmith instance or
+  production data.
 - **Synthetic identities persist** in the local database. `reset` deletes them
   with the volume.
 - **Destructive reset** removes the lab volume, `.env`, seed state, and runtime

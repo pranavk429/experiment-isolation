@@ -194,13 +194,14 @@ plus rollout percentage. Malformed metadata is an EngineError, not a traceback.
 
 ## Receipt size
 
-The receipt target is <=125 actual tokens. The engine's own estimate is
-ceil(characters/4). Recorded actuals:
-- 2-way: 429 chars, estimate 108, cl100k 120, o200k 121.
-- 3-way: 435 chars, estimate 109, cl100k 124, o200k 125.
-The receipt includes scope=planned_experiments, remaining_environment_collisions,
-before/after Jaccard, before/after multi-exposed rate, token counts, one compact
-rollback pointer, and pass. Full rollback commands live in plan.json/apply.json.
+The receipt exceeds the old 100-token target; the stated ceiling is <=125 actual
+tokens. The engine's own estimate is ceil(characters/4).
+- Authoritative 2-way receipt: 429 chars, 121 o200k / 120 cl100k (engine estimate 107).
+- 3-way stress-test receipt: 435 chars, 125 o200k / 124 cl100k (engine estimate 109).
+Both include scope=planned_experiments, remaining_environment_collisions,
+before/after Jaccard, before/after multi-exposed rates, changes, per-command
+token-count estimates, one compact rollback pointer, and pass. Full rollback
+commands live in plan.json/apply.json.
 
 ## Files
 
@@ -224,7 +225,7 @@ rollback pointer, and pass. Full rollback commands live in plan.json/apply.json.
 - plan: feasible, width 50, reused segments 7/8, token iso-936dad73.
 - apply: 2 running, 6 steps, segments created 0 / reused 2.
 - verify: 1.0 -> 0.0, multi 0.76 -> 0.0, pass true, enrolled 46/54.
-- receipt: 429 chars, estimate 108, cl100k 120, o200k 121, pass true.
+- receipt: 429 chars, estimate 107, cl100k 120, o200k 121, pass true.
 - rollback: both started experiments recreated as drafts (29/30),
   live_restore=false, requires_recreate=true, segments_deleted 0.
 
@@ -235,7 +236,7 @@ rollback pointer, and pass. Full rollback commands live in plan.json/apply.json.
 - apply: 3 running, 9 steps, created segments 46/47/48.
 - verify: max pairwise 0.0, multi 0.76 -> 0.0, pass true,
   enrolled 31/35/34.
-- receipt: 435 chars, estimate 109, cl100k 124, o200k 125, pass true.
+- receipt (stress test): 435 chars, estimate 109, cl100k 124, o200k 125, pass true.
 - rollback: 3 started experiments recreated as drafts (34/35/36),
   live_restore=false, segments_deleted [46/47/48].
 

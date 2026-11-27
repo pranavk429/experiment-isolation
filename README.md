@@ -25,11 +25,11 @@ Flagsmith 2.291.0 has no native mutual exclusion. An experiment audience holds o
 1. **Audit** — read-only. Lists non-completed experiments, samples identities, persists traits via the Flagsmith CLI, and reads enrollment from `metadata.experiment.in_experiment`. Exits `10` on collision (the expected gate signal) and still writes JSON; `0` is clear/none.
 2. **N-way overlap matrix** — every experiment pair's `shared`, `union`, `jaccard`, enrollment rates, multi-exposure rate, and a `collision` verdict against a threshold (default `0.05`).
 3. **Refuse** — `apply` exits `10` when overlap exceeds the threshold, the approval token is missing or wrong, or an experiment is not a draft. No mutation on refusal.
-4. **N-way bucket-segment isolation** — contiguous ranges over `flagsmith_experiment_bucket` (0–99), up to `--max-concurrent 4` drafts by default and at least `--min-bucket-width 5` buckets each. Two-way uses `[0,49]`/`[50,99]`; the live 3-way run used `[0,32]`/`[33,65]`/`[66,99]`.
+4. **N-way bucket-segment isolation** — contiguous ranges over `flagsmith_experiment_bucket` (0–99), up to `--max-concurrent 4` drafts by default and at least `--min-bucket-width 5` buckets each. Two-way uses `[0,49]`/`[50,99]`; the 3-way stress run used `[0,32]`/`[33,65]`/`[66,99]`.
 5. **Approve** — the plan carries an HMAC-bound token; `apply` re-derives it and rejects an edited plan with a recomputed public token. Undo with `python3 -m engine.cli rollback --apply apply.json`.
-6. **Apply** — ensures segments (creates missing, reuses existing), disables the rollout, patches the audience, and starts; start re-enables.
+6. **Apply** — ensures segments (create/reuse), disables the rollout, patches the audience, and starts; start re-enables.
 7. **Verify** — resamples, recomputes N-way overlap for planned drafts, and requires `after_jaccard == 0.0`.
-8. **Receipt** — compact JSON (121 tokens, 2-way; 125, 3-way; `o200k_base`): environment, sample size, before/after, changes, rollback reference, token counts, `pass`.
+8. **Receipt** — compact JSON (121 tokens for the 2-way demo; 3-way stress 125; `o200k_base`): sample size, before/after, changes, rollback reference, token counts, `pass`.
 
 ## How Flagsmith is used
 
@@ -71,8 +71,8 @@ Summary to stderr, JSON to stdout or `--out`. Exit codes: `0` clear/success, `10
 
 Beat sheet: [docs/demo-script.md](docs/demo-script.md); ~15 seconds on the problem, most on the product.
 
-1. **0:00–0:15 — Problem.** Seeded drafts 49/50, one audience. Contamination is invisible until the results disagree.
-2. **0:15–0:30 — What it is.** Skill + engine + lab; audit, refuse, isolate, verify, receipt.
+1. **0:00–0:15 — Problem.** Current main-instance drafts, one audience; lab IDs differ. Contamination is invisible until results disagree.
+2. **0:15–0:30.** Skill + engine + lab; audit, refuse, isolate, verify, receipt.
 3. **0:30–1:05 — Audit and matrix.** Run `audit`; show `exit=10` (collision is the gate signal), then the red N-way matrix.
 4. **1:05–1:25 — Plan and refusal.** Show the bucket segments and approval token; run `apply` with a wrong token, show `exit=10`, no changes.
 5. **1:25–1:50 — Approve and apply.** Run `apply` with the HMAC token; show segments created/reused, then disable → patch → start.
@@ -108,10 +108,10 @@ Reset the demo drafts, then run:
 ```sh
 python3 seed/demo_seed.py --experiments 2   # reset demo state
 
-python3 -m engine.cli audit   --env "$DEV_ENV_KEY" --samples 100 --threshold 0.05 --out audit.json
+python3 -m engine.cli audit   --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
 python3 -m engine.cli plan    --audit audit.json --max-concurrent 4 --min-bucket-width 5 --out plan.json
 python3 -m engine.cli apply   --plan plan.json --approve "<token from plan.json>" --out apply.json
-python3 -m engine.cli verify  --plan plan.json --samples 100 --workers 2 --out verify.json
+python3 -m engine.cli verify  --plan plan.json --samples 500 --workers 2 --out verify.json
 python3 -m engine.cli receipt --audit audit.json --plan plan.json --verify verify.json --apply apply.json --out receipt.json
 python3 -m engine.cli rollback --apply apply.json   # undo, if needed
 ```
@@ -140,25 +140,25 @@ Then ask: "Run another experiment on US mobile — check it does not overlap the
 bash lab/run.sh
 ```
 
-Starts self-hosted Flagsmith `:8010`, storefront `:8020`, and dashboard `:8022`. `bash lab/run.sh demo` runs the full loop against the lab. Lab traffic is simulated and labeled.
+Starts Flagsmith `:8010`, storefront `:8020`, dashboard `:8022`. `bash lab/run.sh demo` runs the loop. Gate: `reset → demo → reset` = 100% → 0% → 100%, HTTP 200, no 409.
 
 ## Results and evidence
 
-Values from `verification/REPORT2.md`; only the harness total is TODO.
+Values from `FINAL.md` (2-way) and `REPORT2.md` (3-way stress); harness total is TODO.
 
 | Evidence | Value | Source |
 |---|---|---|
-| Sample size requested / measured | `100` / `100` | `audit.json.sample_size` |
+| Sample size requested / measured | `500` / `500` | `audit.json.sample_size` |
 | Before: max N-way Jaccard (all pairs) | `1.0` | `audit.json.overlaps[].jaccard` |
 | After: max N-way Jaccard (all pairs) | `0.0` | `verify.json.after_jaccard` |
 | After: `verify.pass` | `true` | `verify.json.pass` |
-| Receipt JSON size | `121` (2-way) / `125` (3-way) | [docs/token-count.md](docs/token-count.md) |
+| Receipt JSON size | `121` (2-way demo); `125` (3-way stress only) | [docs/token-count.md](docs/token-count.md) |
 | Demo-run total tokens | `TODO` | [docs/token-count.md](docs/token-count.md) |
-| Segments created / reused, 2-way verified | `0 / 2` | verification/REPORT2.md |
-| Segments created / reused, 3-way verified | `3 / 0` | verification/REPORT2.md |
-| Tests passing | `92` passed (54 engine + 38 skill) | `pytest` output |
+| Segments created / reused, 2-way verified | `0 / 2` | verification/FINAL.md |
+| Segments created / reused, 3-way stress | `3 / 0` | verification/REPORT2.md |
+| Tests passing | `93` passed (55+38) | `pytest` output |
 
-**Verified results:** before Jaccard 1.0, `after_jaccard == 0.0`, `verify.pass == true`. Receipt is 121 tokens (2-way) / 125 (3-way) under `o200k_base` (120/124 under `cl100k_base`), internal estimate 108/109.
+**Verified results:** before Jaccard 1.0, `after_jaccard == 0.0`, `verify.pass == true`. Receipt is 121 tokens for the 2-way demo (120 `cl100k_base`; 429 chars; internal 107); 125/124 is 3-way stress only.
 
 ## Safety and limitations
 
@@ -186,7 +186,7 @@ Values from `verification/REPORT2.md`; only the harness total is TODO.
 python3 -m pytest tests/engine tests/skill -q
 ```
 
-Expected: `92` passed (54 engine + 38 skill). Engine tests cover sampling, Jaccard, refusal, apply, verify, receipt, rollback; skill tests cover frontmatter, triggers, CLI.
+Expected: `93` passed (55+38). Engine tests cover sampling, Jaccard, refusal, apply, verify, receipt, rollback; skill tests cover frontmatter, triggers, CLI.
 
 ## Repository map
 

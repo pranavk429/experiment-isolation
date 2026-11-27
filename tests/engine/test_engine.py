@@ -478,6 +478,10 @@ def test_plan_isolates_created_pair(bucket_segments) -> None:
     assert plan["approval_token"].startswith("iso-")
     assert len(plan["approval_token"]) == 12
     assert plan["before_jaccard"] == 1.0
+    assert any(
+        "a paused experiment cannot change audience" in item for item in plan["notes"]
+    )
+    assert not any("pause or recreate" in item for item in plan["notes"])
     assert plan["segments_to_create"][0]["id"] == 7
     assert plan["segments_to_create"][1]["id"] == 8
     assert plan["audience_changes"][0]["to_segment_ids"] == [7]
@@ -1348,10 +1352,11 @@ def test_apply_failure_writes_artifact(bucket_segments, tmp_path: Path) -> None:
     )
     fake.fail_start_for = {6}
     with mock.patch("engine.apply.AdminAPI", return_value=fake):
-        with pytest.raises(EngineError):
+        with pytest.raises(EngineError) as excinfo:
             run_apply(
                 make_config(), plan, plan["approval_token"], out_dir=str(tmp_path)
             )
+    assert "after 1 started experiment(s)" in str(excinfo.value)
     artifact = json.loads((tmp_path / "apply-failure.json").read_text(encoding="utf-8"))
     assert artifact["pass"] is False
     assert artifact["segments"] == {"created": [], "reused": [{"id": 7, "name": "exp_bucket_a"}, {"id": 8, "name": "exp_bucket_b"}]}
@@ -1487,4 +1492,34 @@ def test_rollback_deletes_segments_even_without_changes() -> None:
     assert result["pass"] is True
     assert result["segments_deleted"] == [{"id": 5, "name": "exp_iso_tmp"}]
     assert 5 not in fake.segments
+
+
+
+def test_apply_failure_counts_only_started_experiments(bucket_segments, tmp_path: Path) -> None:
+    report = audit_report_n([5, 6, 7])
+    fake = FakeAPI(
+        [
+            experiment(5, "Draft A", segment_ids=[4]),
+            experiment(6, "Draft B", segment_ids=[4]),
+            experiment(7, "Draft C", segment_ids=[4]),
+        ],
+        [US_MOBILE],
+    )
+    with mock.patch("engine.plan.AdminAPI", return_value=fake):
+        plan = build_plan(report, config=make_config())
+    fake.fail_start_for = {7}
+    with mock.patch("engine.apply.AdminAPI", return_value=fake):
+        with pytest.raises(EngineError) as excinfo:
+            run_apply(
+                make_config(), plan, plan["approval_token"], out_dir=str(tmp_path)
+            )
+    message = str(excinfo.value)
+    assert "after 2 started experiment(s)" in message
+    assert "after 3" not in message
+    artifact = json.loads((tmp_path / "apply-failure.json").read_text(encoding="utf-8"))
+    assert [item["status"] for item in artifact["changes"]] == [
+        "running",
+        "running",
+        "applying",
+    ]
 

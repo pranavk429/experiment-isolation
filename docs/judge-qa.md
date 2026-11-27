@@ -24,7 +24,7 @@ It removes one specific threat: cross-experiment treatment contamination when th
 
 ## Q6. What is the token count and what does it include?
 
-The measured demo-run harness number is TODO — do not quote one until it is recorded. The receipt's actual counts are 121 o200k / 120 cl100k for the 2-way and 125 / 124 for the 3-way; the internal estimate is 108–109. Report those exact numbers; state the acceptance target as ≤125 actual ([verification/REPORT2.md](../verification/REPORT2.md)). [token-count.md](token-count.md) defines the harness number: input + output for the 0:30–2:25 session, including `SKILL.md`, any references opened, the five JSON artifacts, command summaries, tool-call arguments, model replies, and retries; the system prompt and history are in the harness total only. The supporting number is the `o200k_base` model-visible subtotal. The receipt's own `token_count` fields use `estimate_tokens` = ceil(characters/4); `skills/experiment-isolation/scripts/token_count.py` uses tiktoken when installed. Report harness, model, date, commit, and sample size; report cached input separately. Do not substitute receipt size for the demo total.
+The measured demo-run harness number is TODO — do not quote one until it is recorded. The authoritative 2-way receipt is 121 o200k / 120 cl100k tokens, 429 characters, internal estimate 107 ([verification/FINAL.md](../verification/FINAL.md)). It includes only the five artifact estimates in its `token_count` object; it excludes the full audit/plan/apply/verify artifacts, the skill body (1,477 o200k / 1,473 cl100k, pending the compatibility trim), and the harness total. The 3-way 125 / 124 is a stress-test figure only and was not re-measured; label it if quoted. State the acceptance target as ≤125 actual. [token-count.md](token-count.md) defines the harness number: input + output for the 0:30–2:25 session, including `SKILL.md`, any references opened, the five JSON artifacts as read, command summaries, tool-call arguments, model replies, and retries; the system prompt and history are in the harness total only. The receipt's own `token_count` fields use `estimate_tokens` = ceil(characters/4); `skills/experiment-isolation/scripts/token_count.py` uses tiktoken when installed. Report harness, model, date, commit, and sample size; report cached input separately. Do not substitute receipt size for the demo total.
 
 ## Q7. Is this merged upstream?
 
@@ -72,7 +72,8 @@ N-way is implemented. The live 3-way run used [0,32], [33,65], [66,99], created 
 - "The demo cohort is synthetic; the real-identifier adapter is TODO."
 - "N-way is live: the 3-way run used [0,32], [33,65], [66,99] and verified max pairwise 0.0."
 - "It isolates the planned experiments; the receipt reports the remaining environment collisions (18 in 3-way, 14 in 2-way)."
-- "Receipts are roughly 120–125 actual tokens; 108–109 internal estimate."
+- "The authoritative 2-way receipt is 121 o200k / 120 cl100k, 429 characters, internal 107; 125/124 is the 3-way stress-test only."
+- "93 tests pass: 55 engine, 38 skill."
 - "Rollback is verified; started experiments are recreated as new drafts, not restored in place."
 - "Apply re-derives the HMAC; recomputing the public token is rejected."
 - "`audit` exit 10 on collision is the expected stop signal."

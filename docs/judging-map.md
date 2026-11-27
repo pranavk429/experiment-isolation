@@ -8,7 +8,7 @@ Use this to check that every claim has an artifact and a moment on screen. Times
 |---|---|---|---|---|
 | **Use of Flagsmith** | Is Flagsmith core, or decorative? Delete it and does the project still behave the same? | `engine/` calls experiments, segments, identities, rollout and start; `lab/docker-compose.yml` runs self-hosted Flagsmith; `skills/experiment-isolation/scripts/` wraps the engine. | 0:30 audit reads enrollment; 1:25 apply cycles the rollout; 2:25 UI shows disjoint audiences. | Delete Flagsmith and there is no enrollment to measure, no audience to change, no state to verify. Run `audit` against the lab. |
 | **Impact** | Would a developer or team actually use it? | README problem section; refusal path; receipt with rollback reference. | 0:00–0:15 problem; 1:05–1:25 refusal; 2:10–2:25 receipt. | The receipt is designed to paste into a launch review or PR. The tool fits an existing Flagsmith workflow without a new dashboard account. |
-| **Creativity** | New idea, or a familiar idea somewhere new? | N-way bucket-segment isolation (`plan.json`), measured before/after, approval token; 3-way verified live. | 0:50 matrix; 1:05 plan; 1:50 verify. | Mutual exclusion for experiments is not a Flagsmith primitive. The implementation uses ordinary segments and traits, so it is portable. |
+| **Creativity** | New idea, or a familiar idea somewhere new? | N-way bucket-segment isolation (`plan.json`), measured before/after, approval token; 3-way stress verified. | 0:50 matrix; 1:05 plan; 1:50 verify. | Mutual exclusion for experiments is not a Flagsmith primitive. The implementation uses ordinary segments and traits, so it is portable. |
 | **Demo video** | Does it show the problem, the product, and Flagsmith clearly? | `docs/demo-script.md`; `docs/assets/hero-before-after.gif` (TODO). | Whole video, problem at 0:00, Flagsmith side at 2:25. | 15 s problem, working product 0:30–2:25, Flagsmith UI 2:25–2:40. Demo is 25% of the scorecard. |
 
 ## Track 3 — Build on Open Source Flagsmith
@@ -25,12 +25,12 @@ Use this to check that every claim has an artifact and a moment on screen. Times
 
 | Criterion | Artifact | Demo timestamp | How to verify |
 |---|---|---|---|
-| **Completes the whole job** | `skills/experiment-isolation/SKILL.md` workflow; five CLI commands from audit to receipt; 2-way and 3-way loops verified. | 0:30–2:25. | Run the five commands in order; audit exits 10 on collision, `apply` changes state, `verify` confirms zero overlap across the planned drafts. |
-| **Token efficiency** | Compact JSON only; receipt 121 tokens (2-way) / 125 (3-way) under `o200k_base`, 120/124 under `cl100k_base`; above the old 100-token budget; `docs/token-count.md`. | 2:10–2:25. | Measure with the helper; verified 121 and 125. |
+| **Completes the whole job** | `skills/experiment-isolation/SKILL.md` workflow; five CLI commands from audit to receipt; 2-way demo and 3-way stress loops verified. | 0:30–2:25. | Run the five commands in order; audit exits 10 on collision, `apply` changes state, `verify` confirms zero overlap across the planned drafts. |
+| **Token efficiency** | Compact JSON only; 2-way demo receipt 121 tokens `o200k_base` / 120 `cl100k_base`, 429 chars, internal 107; 3-way stress 125/124 is not the headline; `docs/token-count.md`. | 2:10–2:25. | Measure with the helper; demo verified 121. |
 | **Creative use of the CLI** | `flagsmith evaluate --persist` for enrollment; `flagsmith api` for experiment/segment admin calls; identity metadata read-back. | 0:30 audit; 1:25 apply. | The key never enters `argv`; no raw experiment payload is dumped into context. |
 | **Safety around production changes** | Read-only audit; audit collision exit 10; HMAC re-derived by apply; running-experiment refusal; engine rollback. Created-only restores in place (`live_restore=true`); started experiments are recreated as drafts (`requires_recreate=true`); failures sanitize keys/URLs and write an artifact. | 1:05–1:25 refusal; 1:25 apply; 2:10 receipt. | Wrong token or edited plan + public token exits 10; undo with `python3 -m engine.cli rollback --apply apply.json`. |
 | **Agent/model tested** | OpenCode general subagent, DeepSeek V4.1 Flash 1017 (`opencode-go`), 2026-11-27, in `docs/submission.md`. | N/A | Recorded for the verified run. |
-| **Token count for demo run** | `TODO`: full harness total in `docs/submission.md` and `token-count.md`; receipt 121/125 already measured. | 2:10 receipt beat. | Required by the form; only the harness total is outstanding. |
+| **Token count for demo run** | `TODO`: full harness total in `docs/submission.md` and `token-count.md`; 2-way receipt 121 already measured. | 2:10 receipt beat. | Required by the form; only the harness total is outstanding. |
 | **Upstream fit** | Agent Skills layout; `SKILL.md` frontmatter; progressive disclosure; no upstream merge claim. | Close. | `tests/skill` covers frontmatter and triggers; say "packaged for contribution." |
 
 ## Submission mechanics
@@ -43,18 +43,18 @@ Use this to check that every claim has an artifact and a moment on screen. Times
 | Track 4 harness total | `docs/token-count.md`, `docs/submission.md` | TODO measure |
 | Track 4 agent/model tested | `docs/submission.md` | Done |
 | No secrets committed | `.gitignore`, env-only keys, `flagsmith api` | Verify before push |
-| Lab runs from a clean clone | `bash lab/run.sh`, `lab/README.md` | Verify before recording |
+| Lab runs from a clean clone | `bash lab/run.sh`, `lab/README.md` | Verified: `reset → demo → reset` = 100% → 0% → 100%, HTTP 200, no 409 |
 
 ## Evidence gaps (do not paper over)
 
 | Claim | Current state | What closes it |
 |---|---|---|
-| Sample size actually measured | 100 | `audit.json.sample_size` from the 2-way run. |
+| Sample size actually measured | 500 | `audit.json.sample_size` from the 2-way run. |
 | Before Jaccard | 1.0 | `audit.json.overlaps[].jaccard`. |
 | After Jaccard | 0.0 | `verify.json.after_jaccard`. |
-| Receipt size | 121 (2-way) / 125 (3-way) | `token_count.py`; o200k_base (120/124 cl100k). |
+| Receipt size | 121 (2-way demo); 125 (3-way stress) | `token_count.py`; o200k 121/120 cl100k. |
 | Demo-run token total | TODO | Export harness usage and sum input + output. |
-| Tests passing | 92 (54 engine + 38 skill) | `pytest tests/engine tests/skill -q`. |
+| Tests passing | 93 (55 engine + 38 skill) | `pytest tests/engine tests/skill -q`. |
 | Demo video | TODO | Record the 2:45 cut and upload. |
 
 If a judge asks for a number and the table says `TODO`, say it is not recorded yet. Do not estimate it on camera.

@@ -1,0 +1,2 @@
+python3 -m engine.cli rollback --apply video/work/reapply/apply.json --out video/work/reapply/rollback.json
+jq '{pass, live_restore, requires_recreate, actions}' video/work/reapply/rollback.json

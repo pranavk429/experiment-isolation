@@ -442,9 +442,14 @@ def run_apply(
             steps,
         )
         suffix = " State saved to %s." % failure_path if failure_path else ""
+        started = sum(
+            1
+            for step in steps
+            if step.get("step") == "start" and step.get("verified") is True
+        )
         raise EngineError(
-            "Apply failed after %d experiment(s).%s Run the rollback command."
-            % (len(applied), suffix)
+            "Apply failed after %d started experiment(s).%s Run the rollback command."
+            % (started, suffix)
         ) from exc
 
     rollback = ["python3 -m engine.cli rollback --apply apply.json --out rollback.json"]

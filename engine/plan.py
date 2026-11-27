@@ -349,8 +349,8 @@ def build_plan(
             % len(base["blocked_running"])
         )
     base["notes"].append(
-        "running experiments are reported but not changed; pause or recreate them "
-        "before changing their audience"
+        "a paused experiment cannot change audience; to isolate a running "
+        "experiment, complete/delete it and recreate it, or isolate before launch"
     )
     if running_collisions:
         base["notes"].append(

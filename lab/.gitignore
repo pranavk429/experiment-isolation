@@ -9,4 +9,5 @@ dashboard/plan.json
 dashboard/apply.json
 dashboard/verify.json
 dashboard/receipt.json
+dashboard/rollback.json
 dashboard/restore-*.json

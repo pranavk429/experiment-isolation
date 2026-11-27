@@ -10,8 +10,7 @@ Everything is local. No Flagsmith Cloud account, no production data.
 
 ```bash
 cd "experiment-isolation"
-bash lab/run.sh reset     # only if you want a clean collision again
-bash lab/run.sh           # starts the lab, seeds drafts, audits, serves pages
+bash lab/run.sh reset     # wipe, rebuild a clean collision baseline, and start the lab
 ```
 
 Wait for the summary and open:
@@ -106,8 +105,7 @@ they ship."*
 ## Reset for another take
 
 ```bash
-bash lab/run.sh reset
-bash lab/run.sh
+bash lab/run.sh reset   # wipes + rebuilds the clean 100% collision baseline
 ```
 
 ## Fallback if the engine CLI is missing
