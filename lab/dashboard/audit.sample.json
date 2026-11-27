@@ -1,0 +1,76 @@
+{
+  "_meta": {
+    "source": "sample",
+    "reason": "Illustrative fixture shipped with the lab; lab/run.sh replaces it with a measured audit when engine.cli is available.",
+    "generated_at": "2026-11-27T00:00:00+00:00",
+    "note": "Not a measured audit. Both experiments intentionally share the us_mobile segment."
+  },
+  "environment": {
+    "id": 1,
+    "name": "Development",
+    "key_prefix": "ISOL"
+  },
+  "sample_size": 500,
+  "threshold": 0.05,
+  "experiments": [
+    {
+      "id": 2,
+      "name": "Pricing banner",
+      "feature": "pricing_banner",
+      "status": "created",
+      "audience_segment_ids": [
+        4
+      ],
+      "rollout_percentage": 100
+    },
+    {
+      "id": 3,
+      "name": "Onboarding tip",
+      "feature": "onboarding_tip",
+      "status": "created",
+      "audience_segment_ids": [
+        4
+      ],
+      "rollout_percentage": 100
+    }
+  ],
+  "overlaps": [
+    {
+      "a": 2,
+      "b": 3,
+      "shared": 250,
+      "union": 250,
+      "jaccard": 1,
+      "a_rate": 0.5,
+      "b_rate": 0.5,
+      "verdict": "collision"
+    }
+  ],
+  "collisions": [
+    [
+      2,
+      3
+    ]
+  ],
+  "verdict": "collision",
+  "sample_traits": [
+    "country",
+    "platform",
+    "flagsmith_experiment_bucket"
+  ],
+  "audience_segment": {
+    "id": 4,
+    "name": "us_mobile"
+  },
+  "before_after": {
+    "before": {
+      "max_jaccard": 1,
+      "verdict": "collision"
+    },
+    "after": {
+      "max_jaccard": 0,
+      "verdict": "isolated"
+    },
+    "note": "Illustrative target only. Real before/after is read from receipt.json or verify.json after plan/apply/verify."
+  }
+}

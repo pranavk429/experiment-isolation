@@ -1,0 +1,15 @@
+# Experiment Isolation — draft terminal take against the self-hosted lab (:8010).
+# Parent shell exports the lab environment; no secrets are printed.
+python3 -m engine.cli audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out video/work/draft/audit.json
+jq '{verdict, collisions, overlaps: [.overlaps[] | {a, b, jaccard}]}' video/work/draft/audit.json
+python3 -m engine.cli plan --audit video/work/draft/audit.json --out video/work/draft/plan.json
+jq '{approval_token, segments_to_create: [.segments_to_create[] | {name, operator, value}], audience_changes: [.audience_changes[] | {experiment, from_segment_ids, to_segment}]}' video/work/draft/plan.json
+python3 -m engine.cli apply --plan video/work/draft/plan.json --approve "wrong-token" --out video/work/draft/refused.json; echo "exit=$?"
+TOKEN=$(jq -r .approval_token video/work/draft/plan.json)
+python3 -m engine.cli apply --plan video/work/draft/plan.json --approve "$TOKEN" --out video/work/draft/apply.json
+cat video/work/draft/apply.json
+python3 -m engine.cli verify --plan video/work/draft/plan.json --samples 500 --out video/work/draft/verify.json
+jq '{before_jaccard, after_jaccard, pass, overlaps: (.overlaps | length)}' video/work/draft/verify.json
+python3 -m engine.cli receipt --audit video/work/draft/audit.json --plan video/work/draft/plan.json --verify video/work/draft/verify.json --out video/work/draft/receipt.json
+jq '{token_count, pass}' video/work/draft/receipt.json
+printf 'receipt tokens: '; python3 skill/scripts/token_count.py video/work/draft/receipt.json

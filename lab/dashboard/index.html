@@ -1,0 +1,685 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experiment Isolation Lab · overlap audit</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23070b10'/><path d='M25 70 50 24l25 46' stroke='%23c9ff4d' stroke-width='9' fill='none'/></svg>">
+<style>
+:root {
+  color-scheme: dark;
+  --ink: #070b10;
+  --panel: #0f161e;
+  --panel-2: #121b24;
+  --line: #22303d;
+  --line-soft: rgba(255,255,255,.08);
+  --text: #e9f0f5;
+  --muted: #8fa1b1;
+  --lime: #c9ff4d;
+  --lime-dim: rgba(201,255,77,.13);
+  --coral: #ff6b5e;
+  --coral-dim: rgba(255,107,94,.13);
+  --amber: #ffc857;
+  --teal: #63e6d5;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body {
+  background:
+    radial-gradient(1000px 480px at 8% -10%, rgba(255,107,94,.10), transparent 60%),
+    radial-gradient(800px 420px at 96% 2%, rgba(99,230,213,.07), transparent 62%),
+    var(--ink);
+  color: var(--text); font-family: var(--sans); line-height: 1.5;
+}
+body.isolated {
+  background:
+    radial-gradient(1000px 480px at 8% -10%, rgba(201,255,77,.10), transparent 60%),
+    radial-gradient(800px 420px at 96% 2%, rgba(99,230,213,.07), transparent 62%),
+    var(--ink);
+}
+a { color: var(--teal); }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 26px; }
+header {
+  position: sticky; top: 0; z-index: 10;
+  background: rgba(7,11,16,.84); backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line-soft);
+}
+.nav { display: flex; align-items: center; justify-content: space-between; height: 68px; gap: 18px; }
+.brand { display: flex; align-items: center; gap: 11px; font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; }
+.mark { width: 29px; height: 29px; border: 1px solid var(--lime); border-radius: 8px; display: grid; place-items: center; color: var(--lime); font-weight: 700; }
+.brand small { color: var(--muted); font-size: 10px; letter-spacing: .08em; }
+.actions { display: flex; align-items: center; gap: 9px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line);
+  border-radius: 999px; padding: 5px 9px; font: 10px var(--mono); letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); white-space: nowrap;
+}
+.chip.live { border-color: rgba(201,255,77,.42); color: var(--lime); background: var(--lime-dim); }
+.chip.warn { border-color: rgba(255,200,87,.45); color: var(--amber); background: rgba(255,200,87,.10); }
+button {
+  background: transparent; color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 8px 11px; font: 11px var(--mono); cursor: pointer;
+}
+button:hover { border-color: var(--lime); color: var(--lime); }
+button:disabled { opacity: .55; cursor: progress; }
+main { padding: 42px 0 64px; }
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) 190px; gap: 30px; align-items: center; padding-bottom: 28px; border-bottom: 1px solid var(--line-soft); }
+.kicker { font: 11px var(--mono); letter-spacing: .17em; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+h1 { font-size: clamp(40px, 6.2vw, 76px); line-height: .92; letter-spacing: -.045em; margin: 0 0 14px; font-weight: 650; }
+body.collision h1 { color: var(--coral); }
+body.isolated h1 { color: var(--lime); }
+.lede { color: var(--muted); max-width: 66ch; margin: 0; font-size: 15px; }
+.lede strong { color: var(--text); font-weight: 600; }
+.meta-row { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 17px; }
+.gauge {
+  --pct: 0; --verdict: var(--muted);
+  width: 168px; height: 168px; border-radius: 50%; justify-self: end;
+  background: conic-gradient(var(--verdict) calc(var(--pct) * 1%), #1b2733 0);
+  display: grid; place-items: center; position: relative;
+  box-shadow: 0 0 0 1px var(--line), 0 28px 70px rgba(0,0,0,.28);
+}
+.gauge-inner { width: 136px; height: 136px; border-radius: 50%; background: var(--ink); display: flex; flex-direction: column; align-items: center; justify-content: center; border: 1px solid var(--line-soft); }
+.gauge-inner span { font: 650 34px/1 var(--mono); letter-spacing: -.06em; }
+.gauge-inner small { color: var(--muted); font: 9px var(--mono); letter-spacing: .13em; text-transform: uppercase; margin-top: 7px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin: 24px 0 28px; }
+.stat { border: 1px solid var(--line); border-radius: 11px; background: rgba(15,22,30,.7); padding: 15px 16px; }
+.stat-label { color: var(--muted); font: 9px var(--mono); letter-spacing: .13em; text-transform: uppercase; }
+.stat-value { font: 650 28px/1.1 var(--mono); letter-spacing: -.04em; margin-top: 7px; }
+.stat-sub { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.panel { border: 1px solid var(--line); border-radius: 14px; background: linear-gradient(180deg, rgba(18,27,36,.9), rgba(15,22,30,.9)); margin-bottom: 16px; overflow: hidden; }
+.panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--line-soft); }
+.panel-head h2 { margin: 0; font-size: 14px; letter-spacing: -.01em; }
+.panel-head p { margin: 0; color: var(--muted); font: 10px var(--mono); letter-spacing: .05em; }
+.panel-body { padding: 18px; }
+.experiment-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+.exp-card { border: 1px solid var(--line); border-radius: 11px; background: #0b1219; padding: 16px; position: relative; overflow: hidden; }
+.exp-card.hit { border-color: rgba(255,107,94,.38); }
+.exp-card.hit::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--coral); }
+.exp-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.exp-id { font: 9px var(--mono); color: var(--muted); letter-spacing: .1em; }
+.status { font: 9px var(--mono); text-transform: uppercase; letter-spacing: .07em; border: 1px solid var(--line); border-radius: 999px; padding: 3px 7px; color: var(--muted); }
+.status.running { color: var(--lime); border-color: rgba(201,255,77,.35); }
+.status.created { color: var(--amber); border-color: rgba(255,200,87,.35); }
+.status.paused, .status.completed { color: var(--muted); }
+.exp-card h3 { margin: 9px 0 2px; font-size: 20px; letter-spacing: -.02em; }
+.feature { font: 11px var(--mono); color: var(--teal); margin-bottom: 12px; }
+.tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 14px; }
+.tag { font: 9px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+.mini-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border-top: 1px solid var(--line-soft); padding-top: 11px; }
+.mini-label { font: 8px var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.mini-value { font: 15px var(--mono); margin-top: 2px; }
+.bar { height: 4px; border-radius: 999px; background: #1c2834; overflow: hidden; margin-top: 7px; }
+.bar span { display: block; height: 100%; background: var(--teal); border-radius: inherit; }
+.empty { border: 1px dashed var(--line); border-radius: 10px; padding: 26px; color: var(--muted); text-align: center; font-size: 13px; }
+.matrix-wrap { overflow-x: auto; }
+.matrix { width: 100%; border-collapse: separate; border-spacing: 4px; min-width: 540px; }
+.matrix caption { text-align: left; color: var(--muted); font: 10px var(--mono); padding-bottom: 9px; }
+.matrix th { font: 10px var(--mono); color: var(--muted); text-align: left; font-weight: 500; padding: 6px 8px; }
+.matrix thead th { text-align: center; text-transform: uppercase; letter-spacing: .07em; }
+.matrix tbody th { white-space: nowrap; max-width: 230px; overflow: hidden; text-overflow: ellipsis; }
+.row-id { color: var(--teal); margin-right: 5px; }
+.matrix td { text-align: center; vertical-align: middle; border-radius: 7px; padding: 10px 8px; min-width: 92px; border: 1px solid var(--line); background: #0b1219; }
+.matrix td strong { display: block; font: 600 15px var(--mono); }
+.matrix td small { display: block; color: var(--muted); font: 8px var(--mono); margin-top: 3px; }
+.matrix td.diag { color: #3d4c59; background: #0a1016; }
+.matrix td.na { color: #3d4c59; }
+.matrix td.collision { background: var(--coral-dim); border-color: rgba(255,107,94,.45); }
+.matrix td.collision strong { color: var(--coral); }
+.matrix td.watch { background: rgba(255,200,87,.08); border-color: rgba(255,200,87,.3); }
+.matrix td.watch strong { color: var(--amber); }
+.matrix td.clear { background: rgba(201,255,77,.07); border-color: rgba(201,255,77,.28); }
+.matrix td.clear strong { color: var(--lime); }
+.legend { display: flex; flex-wrap: wrap; gap: 13px; padding-top: 12px; color: var(--muted); font: 9px var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.legend i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.two-col { display: grid; grid-template-columns: 1.15fr .85fr; gap: 16px; }
+.ba-grid { display: flex; align-items: center; gap: 10px; }
+.ba-card { flex: 1; border: 1px solid var(--line); border-radius: 10px; background: #0b1219; padding: 13px; }
+.ba-card.before { border-color: rgba(255,107,94,.28); }
+.ba-card.after.clear { border-color: rgba(201,255,77,.28); }
+.ba-label { font: 9px var(--mono); color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+.ba-value { font: 650 30px/1 var(--mono); letter-spacing: -.05em; margin: 8px 0 2px; }
+.ba-verdict { font: 9px var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.ba-bar { height: 4px; border-radius: 999px; background: #1c2834; overflow: hidden; margin-top: 9px; }
+.ba-bar span { display: block; height: 100%; background: var(--coral); }
+.ba-card.after.clear .ba-bar span { background: var(--lime); }
+.ba-arrow { color: var(--muted); font: 18px var(--mono); }
+.ba-note { color: var(--muted); font-size: 11px; margin-top: 12px; }
+.evidence-row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-soft); font: 11px var(--mono); }
+.evidence-row:last-child { border-bottom: 0; }
+.evidence-row span { color: var(--muted); }
+.pass { color: var(--lime); }
+.fail { color: var(--coral); }
+.cmd { font: 10px/1.7 var(--mono); color: #c8d7e3; background: #0a1118; border: 1px solid var(--line); border-radius: 7px; padding: 9px 11px; margin-bottom: 7px; overflow-wrap: anywhere; }
+.prompt { color: var(--lime); margin-right: 6px; }
+.note { border: 1px solid rgba(255,200,87,.4); background: rgba(255,200,87,.08); color: #ffe1a3; border-radius: 9px; padding: 11px 13px; margin: 0 0 18px; font-size: 12px; }
+.footer { color: var(--muted); font: 10px/1.6 var(--mono); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; padding-top: 20px; border-top: 1px solid var(--line-soft); }
+.sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+@media (max-width: 880px) {
+  .hero { grid-template-columns: 1fr; }
+  .gauge { justify-self: start; }
+  .stats { grid-template-columns: 1fr 1fr; }
+  .two-col { grid-template-columns: 1fr; }
+  .experiment-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <div class="brand"><span class="mark">I</span><div>Experiment Isolation <small>/ audit</small></div></div>
+    <div class="actions">
+      <span id="source-chip" class="chip">LOADING</span>
+      <button id="refresh" type="button">Refresh audit</button>
+    </div>
+  </div>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <div class="kicker">Pairwise audience overlap · Jaccard</div>
+      <h1 id="verdict-title">Loading audit</h1>
+      <p class="lede" id="verdict-copy">Reading audit.json from this directory.</p>
+      <div class="meta-row" id="env-meta"></div>
+    </div>
+    <div class="gauge" id="gauge" aria-label="Maximum pairwise overlap">
+      <div class="gauge-inner"><span id="max-jaccard">—</span><small>max Jaccard</small></div>
+    </div>
+  </section>
+  <div id="sample-note"></div>
+  <section class="stats" id="stats"></section>
+  <section class="panel">
+    <div class="panel-head"><h2>Experiments in scope</h2><p id="experiments-subtitle">non-completed · one environment</p></div>
+    <div class="panel-body"><div class="experiment-grid" id="experiment-grid"></div></div>
+  </section>
+  <section class="panel">
+    <div class="panel-head"><h2>Pairwise overlap matrix</h2><p id="matrix-subtitle">Jaccard = shared / union</p></div>
+    <div class="panel-body">
+      <div class="matrix-wrap" id="matrix"></div>
+      <div class="legend">
+        <span><i style="background:#ff6b5e"></i>collision: above threshold</span>
+        <span><i style="background:#ffc857"></i>watch: below threshold</span>
+        <span><i style="background:#c9ff4d"></i>isolated: 0%</span>
+      </div>
+    </div>
+  </section>
+  <div class="two-col">
+    <section class="panel">
+      <div class="panel-head"><h2>Before → after</h2><p>receipt.json or verify.json</p></div>
+      <div class="panel-body" id="before-after"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Evidence</h2><p>receipt / verify</p></div>
+      <div class="panel-body" id="evidence"></div>
+    </section>
+  </div>
+  <section class="panel">
+    <div class="panel-head"><h2>Run the full loop</h2><p>engine CLI · approval gated</p></div>
+    <div class="panel-body" id="runbook"></div>
+  </section>
+  <div class="footer">
+    <span>Local only · synthetic identities · no production data</span>
+    <span>audit.json loaded from this page; no build step</span>
+  </div>
+</main>
+<script>
+(function () {
+  "use strict";
+
+  var state = { audit: null, receipt: null, verify: null, source: "audit.json" };
+
+  function $(id) { return document.getElementById(id); }
+
+  function esc(value) {
+    return String(value === null || value === undefined ? "" : value).replace(/[&<>"']/g, function (char) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char];
+    });
+  }
+
+  function pct(value) {
+    if (value === null || value === undefined || isNaN(Number(value))) { return "—"; }
+    return (Math.round(Number(value) * 1000) / 10) + "%";
+  }
+
+  function number(value) {
+    if (value === null || value === undefined || isNaN(Number(value))) { return "—"; }
+    return Number(value).toLocaleString();
+  }
+
+  function pairKey(a, b) {
+    var left = String(a);
+    var right = String(b);
+    return left < right ? left + "|" + right : right + "|" + left;
+  }
+
+  function fetchJson(path, required) {
+    return fetch(path, { cache: "no-store" }).then(function (response) {
+      if (!response.ok) { throw new Error(path + ": HTTP " + response.status); }
+      return response.json();
+    }).catch(function (error) {
+      if (required) { throw error; }
+      return null;
+    });
+  }
+
+  function setLoading(loading) {
+    var button = $("refresh");
+    button.disabled = loading;
+    button.textContent = loading ? "Loading…" : "Refresh audit";
+  }
+
+  function derive() {
+    var audit = state.audit || {};
+    var experiments = Array.isArray(audit.experiments) ? audit.experiments : [];
+    var overlaps = Array.isArray(audit.overlaps) ? audit.overlaps : [];
+    var threshold = Number(audit.threshold);
+    if (isNaN(threshold)) { threshold = 0.05; }
+
+    var maxJaccard = 0;
+    overlaps.forEach(function (overlap) {
+      var value = Number(overlap.jaccard);
+      if (!isNaN(value) && value > maxJaccard) { maxJaccard = value; }
+    });
+
+    var collisionPairs = [];
+    if (Array.isArray(audit.collisions) && audit.collisions.length) {
+      collisionPairs = audit.collisions.map(function (pair) { return [pair[0], pair[1]]; });
+    } else {
+      overlaps.forEach(function (overlap) {
+        var value = Number(overlap.jaccard);
+        if (String(overlap.verdict || "").toLowerCase() === "collision" || value > threshold) {
+          collisionPairs.push([overlap.a, overlap.b]);
+        }
+      });
+    }
+
+    var collisionKeys = {};
+    var collisionIds = {};
+    collisionPairs.forEach(function (pair) {
+      collisionKeys[pairKey(pair[0], pair[1])] = true;
+      collisionIds[String(pair[0])] = true;
+      collisionIds[String(pair[1])] = true;
+    });
+
+    var verdict = String(audit.verdict || "").toLowerCase();
+    if (!verdict) {
+      verdict = collisionPairs.length || maxJaccard > threshold ? "collision" : "isolated";
+    }
+    if (verdict !== "collision" && verdict !== "isolated") { verdict = "isolated"; }
+
+    // Receipt/verify describe the state AFTER apply. The audit stays the
+    // before-snapshot for the matrix, but the hero should show the current
+    // measured state once evidence exists.
+    var afterEvidence = null;
+    if (state.receipt && state.receipt.after && state.receipt.after.max_jaccard !== undefined) {
+      afterEvidence = {
+        maxJaccard: Number(state.receipt.after.max_jaccard),
+        verdict: String(state.receipt.after.verdict || "").toLowerCase() || "isolated",
+        source: "receipt.json"
+      };
+    } else if (state.verify && state.verify.after_jaccard !== undefined) {
+      afterEvidence = {
+        maxJaccard: Number(state.verify.after_jaccard),
+        verdict: Number(state.verify.after_jaccard) > threshold ? "collision" : "isolated",
+        source: "verify.json"
+      };
+    }
+    if (afterEvidence && afterEvidence.verdict !== "collision" && afterEvidence.verdict !== "isolated") {
+      afterEvidence.verdict = afterEvidence.maxJaccard > threshold ? "collision" : "isolated";
+    }
+    var displayJaccard = afterEvidence ? afterEvidence.maxJaccard : maxJaccard;
+    var displayVerdict = afterEvidence ? afterEvidence.verdict : verdict;
+    var displayIsCollision = displayVerdict === "collision";
+
+    function overlapFor(a, b) {
+      var key = pairKey(a, b);
+      for (var index = 0; index < overlaps.length; index += 1) {
+        if (pairKey(overlaps[index].a, overlaps[index].b) === key) { return overlaps[index]; }
+      }
+      return null;
+    }
+
+    function observedRate(id) {
+      var rates = [];
+      overlaps.forEach(function (overlap) {
+        if (String(overlap.a) === String(id) && overlap.a_rate !== undefined) { rates.push(Number(overlap.a_rate)); }
+        if (String(overlap.b) === String(id) && overlap.b_rate !== undefined) { rates.push(Number(overlap.b_rate)); }
+      });
+      if (!rates.length) { return null; }
+      return Math.max.apply(null, rates);
+    }
+
+    return {
+      audit: audit,
+      experiments: experiments,
+      overlaps: overlaps,
+      threshold: threshold,
+      maxJaccard: maxJaccard,
+      collisionPairs: collisionPairs,
+      collisionKeys: collisionKeys,
+      collisionIds: collisionIds,
+      verdict: verdict,
+      isCollision: verdict === "collision",
+      afterEvidence: afterEvidence,
+      displayJaccard: displayJaccard,
+      displayVerdict: displayVerdict,
+      displayIsCollision: displayIsCollision,
+      overlapFor: overlapFor,
+      observedRate: observedRate,
+      sample: (audit._meta || {}).source === "sample",
+      meta: audit._meta || {}
+    };
+  }
+
+  function renderStats(model) {
+    var items = [
+      { label: "Experiments", value: String(model.experiments.length), sub: "non-completed in scope" },
+      { label: "Synthetic sample", value: number(model.audit.sample_size), sub: "identities evaluated" },
+      { label: "Threshold", value: pct(model.threshold), sub: "maximum allowed Jaccard" },
+      {
+        label: model.afterEvidence ? "Collisions (before)" : "Collisions",
+        value: String(model.collisionPairs.length),
+        sub: model.afterEvidence ? "audit snapshot" : "pairs above threshold"
+      }
+    ];
+    $("stats").innerHTML = items.map(function (item) {
+      return "<div class='stat'><div class='stat-label'>" + esc(item.label) + "</div>" +
+        "<div class='stat-value'>" + esc(item.value) + "</div>" +
+        "<div class='stat-sub'>" + esc(item.sub) + "</div></div>";
+    }).join("");
+  }
+
+  function renderExperiments(model) {
+    if (!model.experiments.length) {
+      $("experiment-grid").innerHTML = "<div class='empty'>No experiments in this audit. Run the seed, then regenerate audit.json.</div>";
+      return;
+    }
+    $("experiment-grid").innerHTML = model.experiments.map(function (experiment, index) {
+      var id = String(experiment.id);
+      var status = String(experiment.status || "unknown").toLowerCase();
+      var statusLabel = status === "created" ? "draft" : status;
+      var hit = Boolean(model.collisionIds[id]);
+      var segmentIds = Array.isArray(experiment.audience_segment_ids) ? experiment.audience_segment_ids : [];
+      var tags = segmentIds.length ? segmentIds.map(function (segmentId) {
+        return "<span class='tag'>segment " + esc(segmentId) + "</span>";
+      }).join("") : "<span class='tag'>no segment</span>";
+      var rollout = Number(experiment.rollout_percentage);
+      if (isNaN(rollout)) { rollout = 0; }
+      var observed = model.observedRate(id);
+      return "<article class='exp-card" + (hit ? " hit" : "") + "'>" +
+        "<div class='exp-top'><span class='exp-id'>EXP-" + esc(experiment.id) + " · E" + (index + 1) + "</span>" +
+        "<span class='status " + esc(status) + "'>" + esc(statusLabel) + "</span></div>" +
+        "<h3>" + esc(experiment.name || "Unnamed experiment") + "</h3>" +
+        "<div class='feature'>" + esc(experiment.feature || "unknown feature") + "</div>" +
+        "<div class='tags'>" + tags + "</div>" +
+        "<div class='mini-grid'>" +
+        "<div><div class='mini-label'>rollout</div><div class='mini-value'>" + pct(rollout / 100) + "</div>" +
+        "<div class='bar'><span style='width:" + Math.max(0, Math.min(100, rollout)) + "%'></span></div></div>" +
+        "<div><div class='mini-label'>" + (model.afterEvidence ? "observed (before)" : "observed enrollment") + "</div><div class='mini-value'>" + pct(observed) + "</div>" +
+        "<div class='bar'><span style='width:" + Math.max(0, Math.min(100, Number(observed || 0) * 100)) + "%'></span></div></div>" +
+        "</div></article>";
+    }).join("");
+  }
+
+  function renderMatrix(model) {
+    if (model.experiments.length < 2) {
+      $("matrix").innerHTML = "<div class='empty'>A matrix needs at least two experiments.</div>";
+      return;
+    }
+    var html = "<table class='matrix'><caption class='sr'>Pairwise Jaccard overlap between experiments</caption><thead><tr><th scope='col'>Experiment</th>";
+    model.experiments.forEach(function (experiment, index) {
+      html += "<th scope='col' title='" + esc(experiment.name) + "'>E" + (index + 1) + "</th>";
+    });
+    html += "</tr></thead><tbody>";
+    model.experiments.forEach(function (row, rowIndex) {
+      html += "<tr><th scope='row'><span class='row-id'>E" + (rowIndex + 1) + "</span>" + esc(row.name) + "</th>";
+      model.experiments.forEach(function (col, colIndex) {
+        if (rowIndex === colIndex) {
+          html += "<td class='diag'>—</td>";
+          return;
+        }
+        var overlap = model.overlapFor(row.id, col.id);
+        if (!overlap) {
+          html += "<td class='na'>—</td>";
+          return;
+        }
+        var jaccard = Number(overlap.jaccard);
+        var cssClass = jaccard > model.threshold ? "collision" : (jaccard === 0 ? "clear" : "watch");
+        html += "<td class='" + cssClass + "'><strong>" + pct(jaccard) + "</strong><small>" +
+          number(overlap.shared) + " / " + number(overlap.union) + "</small></td>";
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table>";
+    $("matrix").innerHTML = html;
+    $("matrix-subtitle").textContent = model.afterEvidence
+      ? ((model.verdict === "collision" ? "before snapshot" : "audit snapshot") + " · Jaccard = shared / union")
+      : "Jaccard = shared / union";
+  }
+
+  function verdictFor(jaccard, threshold) {
+    if (jaccard === null || jaccard === undefined || isNaN(Number(jaccard))) { return "not measured"; }
+    return Number(jaccard) > threshold ? "collision" : "isolated";
+  }
+
+  function beforeAfter(model) {
+    var audit = model.audit;
+    var before = null;
+    var after = null;
+    var note = "";
+
+    if (state.receipt && state.receipt.before && state.receipt.after) {
+      before = state.receipt.before;
+      after = state.receipt.after;
+      note = "Read from receipt.json.";
+    } else if (state.verify) {
+      before = { max_jaccard: state.verify.before_jaccard, verdict: verdictFor(state.verify.before_jaccard, model.threshold) };
+      after = { max_jaccard: state.verify.after_jaccard, verdict: verdictFor(state.verify.after_jaccard, model.threshold) };
+      note = "Read from verify.json.";
+    } else if (audit.before_after && audit.before_after.before) {
+      before = audit.before_after.before;
+      after = audit.before_after.after || null;
+      note = audit.before_after.note || "";
+    } else {
+      before = { max_jaccard: model.maxJaccard, verdict: model.verdict };
+      note = "No receipt.json or verify.json yet. The right-hand panel stays empty until plan → apply → verify runs.";
+    }
+
+    var beforeValue = before && before.max_jaccard !== undefined ? Number(before.max_jaccard) : null;
+    var afterValue = after && after.max_jaccard !== undefined ? Number(after.max_jaccard) : null;
+    var afterClass = afterValue === 0 ? "clear" : "";
+    var delta = beforeValue !== null && afterValue !== null ? beforeValue - afterValue : null;
+
+    var html = "<div class='ba-grid'>" +
+      "<div class='ba-card before'><div class='ba-label'>Before</div><div class='ba-value'>" + pct(beforeValue) + "</div>" +
+      "<div class='ba-verdict'>" + esc(before && before.verdict || verdictFor(beforeValue, model.threshold)) + "</div>" +
+      "<div class='ba-bar'><span style='width:" + Math.max(0, Math.min(100, (beforeValue || 0) * 100)) + "%'></span></div></div>" +
+      "<div class='ba-arrow'>→</div>" +
+      "<div class='ba-card after " + afterClass + "'><div class='ba-label'>After</div><div class='ba-value'>" + (afterValue === null ? "—" : pct(afterValue)) + "</div>" +
+      "<div class='ba-verdict'>" + esc(after && after.verdict || verdictFor(afterValue, model.threshold)) + "</div>" +
+      "<div class='ba-bar'><span style='width:" + Math.max(0, Math.min(100, (afterValue || 0) * 100)) + "%'></span></div></div>" +
+      "</div>";
+    if (delta !== null) {
+      html += "<div class='ba-note'><strong>" + (Math.round(delta * 1000) / 10) + " points</strong> of overlap removed.</div>";
+    }
+    if (note) { html += "<div class='ba-note'>" + esc(note) + "</div>"; }
+    if (model.sample) { html += "<div class='ba-note'>Illustrative sample, not a measured before/after. Run the engine for evidence.</div>"; }
+    $("before-after").innerHTML = html;
+  }
+
+  function tokenTotal(counts) {
+    if (!counts || typeof counts !== "object") { return 0; }
+    return Object.keys(counts).reduce(function (total, key) { return total + Number(counts[key] || 0); }, 0);
+  }
+
+  function renderEvidence(model) {
+    var receipt = state.receipt;
+    var verify = state.verify;
+    var rows = [];
+    if (receipt) {
+      rows.push(["receipt.json", "loaded"]);
+      rows.push(["pass", String(Boolean(receipt.pass))]);
+      rows.push(["changes", number(Array.isArray(receipt.changes) ? receipt.changes.length : receipt.changes)]);
+      rows.push(["token count", number(tokenTotal(receipt.token_count))]);
+      rows.push(["rollback steps", number(Array.isArray(receipt.rollback) ? receipt.rollback.length : 0)]);
+    } else if (verify) {
+      rows.push(["verify.json", "loaded"]);
+      rows.push(["pass", String(Boolean(verify.pass))]);
+      rows.push(["before", pct(verify.before_jaccard)]);
+      rows.push(["after", pct(verify.after_jaccard)]);
+      rows.push(["sample", number(verify.sample_size)]);
+    } else {
+      rows.push(["receipt.json", "not found"]);
+      rows.push(["verify.json", "not found"]);
+      rows.push(["status", "audit only"]);
+    }
+    $("evidence").innerHTML = rows.map(function (row, index) {
+      var valueClass = row[0] === "pass" ? (row[1] === "true" ? "pass" : "fail") : "";
+      return "<div class='evidence-row'><span>" + esc(row[0]) + "</span><strong class='" + valueClass + "'>" + esc(row[1]) + "</strong></div>";
+    }).join("") + (state.receipt || state.verify ? "" : "<div class='ba-note'>The dashboard reads <code>receipt.json</code> and <code>verify.json</code> from this directory when present.</div>");
+  }
+
+  function commandLine(command) {
+    return "<div class='cmd'><span class='prompt'>$</span>" + esc(command) + "</div>";
+  }
+
+  function renderRunbook(model) {
+    var commands = [
+      "python3 -m engine.cli audit --env \"$LAB_DEV_ENV_KEY\" --samples 500 --threshold 0.05 --out lab/dashboard/audit.json",
+      "python3 -m engine.cli plan --audit lab/dashboard/audit.json --out lab/dashboard/plan.json",
+      "python3 -m engine.cli apply --plan lab/dashboard/plan.json --approve \"<token>\" --out lab/dashboard/apply.json",
+      "python3 -m engine.cli verify --plan lab/dashboard/plan.json --samples 500 --out lab/dashboard/verify.json",
+      "python3 -m engine.cli receipt --audit lab/dashboard/audit.json --plan lab/dashboard/plan.json --verify lab/dashboard/verify.json --out lab/dashboard/receipt.json"
+    ];
+    var html = "";
+    if (model.sample) {
+      html += "<div class='note'>This is sample data. Run <code>bash lab/run.sh audit</code> after engine.cli lands to replace it with a measured audit.</div>";
+    }
+    html += commands.map(commandLine).join("");
+    html += "<div class='ba-note'>The full loop is approval gated. The dashboard never applies changes; it only reads the audit and evidence files.</div>";
+    $("runbook").innerHTML = html;
+  }
+
+  function renderHeader(model) {
+    var audit = model.audit;
+    var environment = audit.environment || {};
+    var meta = model.meta || {};
+    var sourceChip = $("source-chip");
+    sourceChip.className = "chip " + (model.sample ? "warn" : "live");
+    sourceChip.textContent = model.sample ? "SAMPLE DATA" : "ENGINE AUDIT";
+
+    var metaItems = [];
+    metaItems.push("env: " + (environment.name || "unknown") + (environment.key_prefix ? " · " + environment.key_prefix + "…" : ""));
+    metaItems.push(state.source);
+    metaItems.push(number(audit.sample_size) + " samples");
+    metaItems.push("threshold " + pct(model.threshold));
+    if (model.afterEvidence) { metaItems.push("after: " + model.afterEvidence.source); }
+    if (meta.generated_at) { metaItems.push("generated " + new Date(meta.generated_at).toLocaleString()); }
+    $("env-meta").innerHTML = metaItems.map(function (item) {
+      return "<span class='chip'>" + esc(item) + "</span>";
+    }).join("");
+    $("experiments-subtitle").textContent = model.afterEvidence
+      ? (model.verdict === "collision" ? "audit snapshot · before apply" : "audit snapshot · current")
+      : "non-completed · one environment";
+
+    $("sample-note").innerHTML = "";
+    if (model.sample) {
+      $("sample-note").innerHTML = "<div class='note'><strong>Sample audit.</strong> " +
+        esc(meta.reason || "engine.cli is not available yet") +
+        " The matrix is illustrative; it will be replaced by a measured audit.</div>";
+    }
+  }
+
+  function renderVerdict(model) {
+    var title = $("verdict-title");
+    var copy = $("verdict-copy");
+    if (!model.experiments.length) {
+      title.textContent = "No experiments";
+      copy.innerHTML = "The audit has no experiments. Run <code>python3 lab/seed/seed.py</code>, then regenerate the audit.";
+    } else if (model.afterEvidence) {
+      if (model.displayIsCollision) {
+        title.textContent = "Audiences still collide";
+        copy.innerHTML = "After isolation evidence still shows <strong>" + pct(model.displayJaccard) +
+          "</strong> overlap, above the " + pct(model.threshold) + " threshold. Inspect the evidence panel.";
+      } else {
+        title.textContent = "Audiences isolated";
+        copy.innerHTML = "After isolation: no pair exceeds the " + pct(model.threshold) +
+          " overlap threshold. The matrix below is the <strong>" +
+          (model.verdict === "collision" ? "before snapshot" : "latest audit snapshot") +
+          "</strong>; the receipt is the after evidence.";
+      }
+    } else if (model.isCollision) {
+      title.textContent = "Audiences collide";
+      copy.innerHTML = "<strong>" + model.collisionPairs.length + " pair" + (model.collisionPairs.length === 1 ? "" : "s") +
+        "</strong> " + (model.collisionPairs.length === 1 ? "exceeds" : "exceed") + " the " + pct(model.threshold) +
+        " overlap threshold. A person can enter more than one test, so the readout is contaminated.";
+    } else {
+      title.textContent = "Audiences isolated";
+      copy.innerHTML = "No pair exceeds the " + pct(model.threshold) + " overlap threshold. Each identity enters at most one experiment audience.";
+    }
+    $("max-jaccard").textContent = pct(model.displayJaccard);
+    var gauge = $("gauge");
+    gauge.style.setProperty("--pct", String(Math.max(0, Math.min(100, Math.round(model.displayJaccard * 100)))));
+    gauge.style.setProperty("--verdict", model.displayIsCollision ? "var(--coral)" : "var(--lime)");
+  }
+
+  function render() {
+    var model = derive();
+    document.body.classList.toggle("collision", model.displayIsCollision);
+    document.body.classList.toggle("isolated", !model.displayIsCollision);
+    renderHeader(model);
+    renderVerdict(model);
+    renderStats(model);
+    renderExperiments(model);
+    renderMatrix(model);
+    beforeAfter(model);
+    renderEvidence(model);
+    renderRunbook(model);
+  }
+
+  function renderError(error) {
+    document.body.classList.remove("isolated");
+    document.body.classList.add("collision");
+    $("source-chip").className = "chip warn";
+    $("source-chip").textContent = "NO DATA";
+    $("verdict-title").textContent = "Audit not found";
+    $("verdict-copy").innerHTML = "The dashboard could not load <code>audit.json</code>. Start the lab and generate an audit first.";
+    $("env-meta").innerHTML = "";
+    $("sample-note").innerHTML = "<div class='note'><strong>Expected file:</strong> audit.json in this directory.<br><strong>Command:</strong> bash lab/run.sh<br><strong>Error:</strong> " + esc(error && error.message || error) + "</div>";
+    ["stats", "experiment-grid", "matrix", "before-after", "evidence", "runbook"].forEach(function (id) {
+      $(id).innerHTML = "<div class='empty'>Nothing to render yet.</div>";
+    });
+    $("max-jaccard").textContent = "—";
+  }
+
+  async function load() {
+    setLoading(true);
+    var audit = null;
+    state.source = "audit.json";
+    try {
+      audit = await fetchJson("audit.json", true);
+    } catch (error) {
+      try {
+        audit = await fetchJson("audit.sample.json", true);
+        state.source = "audit.sample.json (fallback)";
+      } catch (sampleError) {
+        renderError(error);
+        setLoading(false);
+        return;
+      }
+    }
+    state.audit = audit;
+    var extras = await Promise.all([fetchJson("receipt.json", false), fetchJson("verify.json", false)]);
+    state.receipt = extras[0];
+    state.verify = extras[1];
+    render();
+    setLoading(false);
+  }
+
+  $("refresh").addEventListener("click", load);
+  load();
+}());
+</script>
+</body>
+</html>

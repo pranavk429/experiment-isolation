@@ -1,0 +1,84 @@
+# Experiment Isolation Lab — self-hosted Flagsmith for audience-collision demos.
+#
+# This is a separate Compose project ("isolation-lab") on ports 8010/8011 so it
+# never touches an existing Flagsmith instance on 8000/8001.
+#
+# Verified against Flagsmith 2.291.0 (the current :latest image at build time).
+# Local playground only: every secret below is a default. Change it before
+# exposing this anywhere outside localhost.
+#
+# Docs: https://docs.flagsmith.com/getting-started/run-locally-with-a-coding-agent
+
+name: isolation-lab
+
+x-flagsmith-env: &flagsmith-env
+  DATABASE_URL: postgresql://postgres:password@postgres:5432/flagsmith
+  USE_POSTGRES_FOR_ANALYTICS: 'true'
+  ENVIRONMENT: production
+  DJANGO_ALLOWED_HOSTS: '*'
+  FLAGSMITH_DOMAIN: localhost:8010
+  DJANGO_SECRET_KEY: isolation-lab-local-only
+  WAREHOUSE_CREDENTIALS_SECRET: isolation-lab-local-only
+  TASK_RUN_METHOD: TASK_PROCESSOR
+  PROMETHEUS_ENABLED: 'true'
+  # Required for the /experiments/ and /warehouse-connections/ API surface.
+  EXPERIMENTATION_ENABLED: 'true'
+
+volumes:
+  pgdata:
+
+services:
+  postgres:
+    image: postgres:15.5-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: flagsmith
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -d flagsmith -U postgres']
+      interval: 2s
+      timeout: 2s
+      retries: 20
+      start_period: 20s
+
+  migrate-db:
+    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    command:
+      - migrate
+    environment:
+      <<: *flagsmith-env
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  flagsmith:
+    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    restart: unless-stopped
+    command:
+      - serve
+    environment:
+      <<: *flagsmith-env
+    ports:
+      - "8010:8000"
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully
+
+  # Required because TASK_RUN_METHOD=TASK_PROCESSOR. Published on 8011 so the
+  # lab never collides with the default 8000/8001 pair.
+  flagsmith-task-processor:
+    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    restart: unless-stopped
+    command:
+      - run-task-processor
+    environment:
+      <<: *flagsmith-env
+    ports:
+      - "8011:8000"
+    depends_on:
+      migrate-db:
+        condition: service_completed_successfully

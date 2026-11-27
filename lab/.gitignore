@@ -1,0 +1,12 @@
+# Local lab runtime — never commit secrets or generated evidence.
+.env
+*.pid
+*.log
+.audit.err
+seed/seed_state.json
+dashboard/audit.json
+dashboard/plan.json
+dashboard/apply.json
+dashboard/verify.json
+dashboard/receipt.json
+dashboard/restore-*.json

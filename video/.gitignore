@@ -1,0 +1,10 @@
+# Recorded media is local until the final cut is chosen.
+raw/*
+!raw/.gitkeep
+captures/*
+renders/*
+work/
+
+# Temporary renders and review frames.
+*.tmp
+review-*.png

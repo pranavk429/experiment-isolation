@@ -1,0 +1,31 @@
+# Secrets — never commit
+.env
+*.key
+*.pem
+
+# Dependencies and Python caches
+node_modules/
+venv/
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+
+# Generated engine evidence
+audit.json
+plan.json
+apply.json
+verify.json
+receipt.json
+restore-*.json
+apply-failure.json
+
+# Lab runtime secrets and generated dashboard evidence
+lab/.env
+lab/audit.json
+lab/dashboard/audit.json
+
+# Rendered video output (final cuts stay local until chosen)
+video/renders/*.mp4
+video/renders/*.mkv
+video/renders/*.webm
