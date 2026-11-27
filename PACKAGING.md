@@ -8,7 +8,9 @@ Prepared and published on 2026-11-27. The public repository contains source and 
 - [x] Author identity resolved from existing Git config (name `Pranav`); no global config changed
 - [x] Initial commit: `723dc2e5a9ece16ef0f519997394abcc531976d1`
 - [x] Verified release commit: `3d18fb74f597688a73e68c03e60d25c33b02e2cf` (`Verified release: Experiment Isolation skill, engine, and self-hosted lab`)
-- [x] Published `master`; working tree clean after the packaging metadata commit
+- [x] Docs commit: `053c06fa484cc1fce0dbd48b8eb003b8835600e0` (`Docs: live repo URL and verified lab status`)
+- [x] Published `master`; live README and skill URL verified via the GitHub API
+- [x] Working tree clean after the packaging metadata commit
 
 ## Ignore rules (`.gitignore` + nested ignores)
 
@@ -59,7 +61,7 @@ The final cut (`video/renders/final.mp4`) is deliberately not uploaded.
 
 ## Commit contents
 
-- 86 tracked files, approximately 1.42 MiB of source (excluding `.git`)
+- 88 tracked files, approximately 1.42 MiB of source (excluding `.git`)
 - No ignored secrets, generated JSON, caches, or video media included
 - The final video is deliberately not uploaded
 
@@ -69,7 +71,9 @@ The final cut (`video/renders/final.mp4`) is deliberately not uploaded.
 - [x] Visibility: `PUBLIC`
 - [x] Default branch: `master`
 - [x] Release commit: `3d18fb74f597688a73e68c03e60d25c33b02e2cf`
+- [x] Docs commit: `053c06fa484cc1fce0dbd48b8eb003b8835600e0`
 - [x] HTTP status: `200`
+- [x] Live URL check: present in `README.md` and `skills/experiment-isolation/SKILL.md`
 - [x] Video media: not uploaded (ignored by `video/.gitignore`)
 
 Publish command used:
