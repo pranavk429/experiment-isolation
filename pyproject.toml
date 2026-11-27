@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "experiment-isolation"
+version = "0.1.0"
+description = "Pre-launch audience collision detection and bucket-segment isolation for Flagsmith experiments"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+experiment-isolation = "engine.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["skills/experiment-isolation/scripts"]
+include = ["engine*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["skills/experiment-isolation/scripts"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+src = ["skills/experiment-isolation/scripts", "lab", "seed", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP031"]
+ignore = ["E501"]

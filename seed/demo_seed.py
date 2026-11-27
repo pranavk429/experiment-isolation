@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Idempotently seed two draft collision experiments in local Flagsmith."""
+"""Idempotently seed draft collision experiments in a Flagsmith environment."""
 
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "experiment-isolation" / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
 
 from engine.seed import main  # noqa: E402
 

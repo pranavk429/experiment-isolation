@@ -1,49 +1,52 @@
 #!/usr/bin/env python3
 """Seed the Experiment Isolation Lab with two deliberately colliding drafts.
 
-Creates (idempotently, matched by name):
+Creates (idempotently, matched by name via engine.seed helpers):
   * features pricing_banner and onboarding_tip, each with a 50/50 variant
   * segment us_mobile (country=US AND platform=mobile)
   * metric Purchase (occurrence)
   * DRAFT experiments "Pricing banner" and "Onboarding tip", both targeting
     us_mobile with a 100% rollout
 
-Both drafts therefore share the same audience and collide 100%. They are left
-in status=created on purpose: Flagsmith only lets a draft experiment change its
-audience, which is exactly what the isolation workflow needs.
+Both drafts share the same audience and collide 100%. They are left in
+status=created on purpose: Flagsmith only lets a draft experiment change its
+audience, which is what the isolation workflow needs.
 
 Rerunning is convergent: active experiments on these two features (including
 running ones from a demo and [rollback] drafts) are paused/removed and replaced
-with clean drafts; stale exp_iso_* bucket segments are deleted. This avoids the
-HTTP 409 "active experiment already exists" failure on rerun.
+with clean drafts; stale exp_iso_* bucket segments are deleted.
 
-Pass --start to start them and make live enrollment measurable. Running
-experiments cannot be retargeted without pausing them first.
-
-Uses the management API with the admin token/master key from lab/.env. Never
-prints a key.
+Pass --start to start them and make live enrollment measurable.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from lablib import (
+import lablib  # noqa: E402, F401
+from engine.api import AdminAPI, ApiError  # noqa: E402
+from engine.api import request_json as engine_request_json  # noqa: E402
+from engine.config import Config  # noqa: E402
+from engine.seed import (  # noqa: E402
+    ensure_feature_with_variant,
+    ensure_purchase_metric,
+    ensure_us_mobile_segment,
+)
+from engine.segments import audience_segment_ids  # noqa: E402
+from engine.util import EngineError  # noqa: E402
+from lablib import (  # noqa: E402
     DEFAULT_API_URL,
     ENV_PATH,
     LAB_DIR,
     LabError,
     find_by_name,
-    get_list,
     load_env,
     now_iso,
-    request_json,
     require,
     write_json,
 )
@@ -72,132 +75,37 @@ FEATURES = [
 ]
 
 
-def ensure_feature(
-    base_url: str, token: str, project_id: int, spec: Dict[str, str]
-) -> tuple:
-    features = get_list(
-        "/projects/%d/features/" % project_id, base_url=base_url, token=token
-    )
-    feature = find_by_name(features, spec["name"])
-    if not feature:
-        feature = request_json(
-            "POST",
-            "/projects/%d/features/" % project_id,
-            base_url=base_url,
-            token=token,
-            payload={
-                "name": spec["name"],
-                "description": spec["description"],
-                "default_enabled": True,
-                "initial_value": "control",
-                "type": "MULTIVARIATE",
-                "multivariate_options": [
-                    {
-                        "type": "unicode",
-                        "string_value": spec["variant"],
-                        "default_percentage_allocation": 50,
-                    }
-                ],
-            },
+class _LabAdminAPI(AdminAPI):
+    """AdminAPI supporting both Master Api-Key and user Token credentials."""
+
+    def __init__(self, config: Config, auth_scheme: str = "Api-Key") -> None:
+        super().__init__(config)
+        self._auth_scheme = auth_scheme
+
+    def _request(
+        self, method: str, path: str, payload: Optional[Dict[str, Any]] = None
+    ) -> Any:
+        if self._auth_scheme == "Api-Key":
+            return super()._request(method, path, payload)
+        url = path if path.startswith("http") else f"{self.base}{path}"
+        safe_path = path.replace(self.config.env_key, "<env>")
+        return engine_request_json(
+            method,
+            url,
+            headers={"Authorization": f"Token {self.config.admin_key}"},
+            payload=payload,
+            timeout=60.0,
+            secrets=(self.config.admin_key, self.config.env_key),
+            safe_path=safe_path,
         )
-        if not isinstance(feature, dict):
-            raise LabError("Feature creation returned an unexpected response for %s" % spec["name"])
-        print("Feature: created %s (id %s)" % (feature.get("name"), feature.get("id")))
-    else:
-        print("Feature: reusing %s (id %s)" % (feature.get("name"), feature.get("id")))
-
-    options = feature.get("multivariate_options") or []
-    option = next(
-        (
-            candidate
-            for candidate in options
-            if str(candidate.get("string_value", "")) == spec["variant"]
-            or str(candidate.get("key", "")) == spec["variant"]
-        ),
-        None,
-    )
-    if option is None:
-        option = request_json(
-            "POST",
-            "/projects/%d/features/%s/mv-options/" % (project_id, feature["id"]),
-            base_url=base_url,
-            token=token,
-            payload={
-                "feature": feature["id"],
-                "type": "unicode",
-                "string_value": spec["variant"],
-                "default_percentage_allocation": 50,
-            },
-        )
-        if not isinstance(option, dict):
-            raise LabError("Variant creation returned an unexpected response for %s" % spec["name"])
-        print("Variant: added %r to %s" % (spec["variant"], spec["name"]))
-    return feature, option
-
-
-def ensure_segment(base_url: str, token: str, project_id: int) -> Dict[str, Any]:
-    segments = get_list(
-        "/projects/%d/segments/" % project_id, base_url=base_url, token=token
-    )
-    segment = find_by_name(segments, SEGMENT_NAME)
-    if segment:
-        print("Segment: reusing %s (id %s)" % (SEGMENT_NAME, segment.get("id")))
-        return segment
-    segment = request_json(
-        "POST",
-        "/projects/%d/segments/" % project_id,
-        base_url=base_url,
-        token=token,
-        payload={
-            "name": SEGMENT_NAME,
-            "description": "Synthetic US mobile audience used by both lab drafts.",
-            "rules": [
-                {
-                    "type": "ALL",
-                    "conditions": [
-                        {"operator": "EQUAL", "property": "country", "value": "US"},
-                        {"operator": "EQUAL", "property": "platform", "value": "mobile"},
-                    ],
-                }
-            ],
-        },
-    )
-    if not isinstance(segment, dict):
-        raise LabError("Segment creation returned an unexpected response")
-    print("Segment: created %s (id %s)" % (SEGMENT_NAME, segment.get("id")))
-    return segment
-
-
-def ensure_metric(base_url: str, token: str, dev_key: str) -> Dict[str, Any]:
-    metrics = get_list(
-        "/environments/%s/experiment-metrics/" % dev_key, base_url=base_url, token=token
-    )
-    metric = find_by_name(metrics, METRIC_NAME)
-    if metric:
-        print("Metric: reusing %s (id %s)" % (METRIC_NAME, metric.get("id")))
-        return metric
-    metric = request_json(
-        "POST",
-        "/environments/%s/experiment-metrics/" % dev_key,
-        base_url=base_url,
-        token=token,
-        payload={
-            "name": METRIC_NAME,
-            "description": "Checkout conversion for the isolation demo.",
-            "definition": {"event": "purchase", "version": 1},
-            "aggregation": "occurrence",
-            "direction": "up",
-        },
-    )
-    if not isinstance(metric, dict):
-        raise LabError("Metric creation returned an unexpected response")
-    print("Metric: created %s (id %s)" % (METRIC_NAME, metric.get("id")))
-    return metric
 
 
 def experiment_payload(
-    spec: Dict[str, str], feature: Dict[str, Any], option: Dict[str, Any],
-    metric: Dict[str, Any], segment: Dict[str, Any]
+    spec: Dict[str, str],
+    feature: Dict[str, Any],
+    option: Dict[str, Any],
+    metric: Dict[str, Any],
+    segment: Dict[str, Any],
 ) -> Dict[str, Any]:
     return {
         "feature": feature["id"],
@@ -229,84 +137,41 @@ def experiment_feature_id(experiment: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def experiment_detail(
-    base_url: str, token: str, dev_key: str, experiment_id: int
-) -> Dict[str, Any]:
-    detail = request_json(
-        "GET",
-        "/environments/%s/experiments/%s/" % (dev_key, experiment_id),
-        base_url=base_url,
-        token=token,
-    )
+def experiment_detail(api: AdminAPI, dev_key: str, experiment_id: int) -> Dict[str, Any]:
+    detail = api.get(f"/api/v1/environments/{dev_key}/experiments/{experiment_id}/")
     if not isinstance(detail, dict):
-        raise LabError("Could not read experiment %s" % experiment_id)
+        raise LabError(f"Could not read experiment {experiment_id}")
     return detail
 
 
-def audience_ids_from_detail(
-    detail: Dict[str, Any], fallback: Optional[List[int]] = None
-) -> List[int]:
-    rollout = detail.get("experiment_rollout") or {}
-    audience = rollout.get("audience") or {}
-    segments = audience.get("segments") or []
-    ids = sorted(
-        {
-            int(segment["id"])
-            for segment in segments
-            if isinstance(segment, dict) and segment.get("id") is not None
-        }
-    )
-    return ids or list(fallback or [])
-
-
-def remove_experiment(
-    base_url: str, token: str, dev_key: str, experiment: Dict[str, Any]
-) -> None:
+def remove_experiment(api: AdminAPI, dev_key: str, experiment: Dict[str, Any]) -> None:
     """Pause if needed, then delete a conflicting experiment."""
     experiment_id = int(experiment["id"])
-    detail = experiment_detail(base_url, token, dev_key, experiment_id)
+    detail = experiment_detail(api, dev_key, experiment_id)
     status = str(detail.get("status", ""))
-    label = "%s (id %s, %s)" % (detail.get("name"), experiment_id, status)
+    label = f"{detail.get('name')} (id {experiment_id}, {status})"
     if status == "running":
-        print("Experiment: pausing %s before removal" % label)
+        print(f"Experiment: pausing {label} before removal")
         try:
-            request_json(
-                "POST",
-                "/environments/%s/experiments/%s/pause/" % (dev_key, experiment_id),
-                base_url=base_url,
-                token=token,
-                payload={},
-            )
-        except LabError as exc:
+            api.post(f"/api/v1/environments/{dev_key}/experiments/{experiment_id}/pause/", {})
+        except (ApiError, EngineError) as exc:
+            raise LabError(f"Could not pause {label}: {exc}. Run: bash lab/run.sh reset") from exc
+        detail = experiment_detail(api, dev_key, experiment_id)
+        if str(detail.get("status", "")) == "running":
             raise LabError(
-                "Could not pause %s: %s. Run: bash lab/run.sh reset" % (label, exc)
-            ) from exc
-        detail = experiment_detail(base_url, token, dev_key, experiment_id)
-        status = str(detail.get("status", ""))
-        if status == "running":
-            raise LabError(
-                "Experiment %s is still running after pause. Run: bash lab/run.sh reset" % label
+                f"Experiment {label} is still running after pause. Run: bash lab/run.sh reset"
             )
     try:
-        request_json(
-            "DELETE",
-            "/environments/%s/experiments/%s/" % (dev_key, experiment_id),
-            base_url=base_url,
-            token=token,
-        )
-    except LabError as exc:
-        raise LabError(
-            "Could not remove %s: %s. Run: bash lab/run.sh reset" % (label, exc)
-        ) from exc
-    print("Experiment: removed conflicting %s" % label)
+        api.delete(f"/api/v1/environments/{dev_key}/experiments/{experiment_id}/")
+    except (ApiError, EngineError) as exc:
+        raise LabError(f"Could not remove {label}: {exc}. Run: bash lab/run.sh reset") from exc
+    print(f"Experiment: removed conflicting {label}")
 
 
 def active_experiments_for_feature(
-    base_url: str, token: str, dev_key: str, feature_id: int
+    api: AdminAPI, dev_key: str, feature_id: int
 ) -> List[Dict[str, Any]]:
-    experiments = get_list(
-        "/environments/%s/experiments/" % dev_key, base_url=base_url, token=token
-    )
+    experiments = api.get_all(f"/api/v1/environments/{dev_key}/experiments/")
     return [
         experiment
         for experiment in experiments
@@ -315,34 +180,134 @@ def active_experiments_for_feature(
     ]
 
 
-def cleanup_bucket_segments(base_url: str, token: str, project_id: int) -> None:
+def cleanup_bucket_segments(api: AdminAPI, project_id: int) -> None:
     """Remove stale exp_iso_* segments so a rerun starts from one clean audience."""
-    segments = get_list(
-        "/projects/%d/segments/" % project_id, base_url=base_url, token=token
-    )
-    removed = []
+    segments = api.get_all(f"/api/v1/projects/{project_id}/segments/")
+    removed: List[str] = []
     for segment in segments:
         name = str(segment.get("name", ""))
         if not name.startswith("exp_iso_"):
             continue
         try:
-            request_json(
-                "DELETE",
-                "/projects/%d/segments/%s/" % (project_id, segment["id"]),
-                base_url=base_url,
-                token=token,
-            )
-        except LabError as exc:
-            print("Segment: could not remove stale %s (%s); leaving it" % (name, exc))
+            api.delete(f"/api/v1/projects/{project_id}/segments/{segment['id']}/")
+        except (ApiError, EngineError) as exc:
+            print(f"Segment: could not remove stale {name} ({exc}); leaving it")
             continue
         removed.append(name)
     if removed:
-        print("Segments: removed stale %s" % ", ".join(removed))
+        print(f"Segments: removed stale {', '.join(removed)}")
+
+
+def _guard_cross_feature_name(
+    api: AdminAPI, dev_key: str, spec: Dict[str, str], feature_id: int
+) -> None:
+    for item in api.get_all(f"/api/v1/environments/{dev_key}/experiments/"):
+        owner = experiment_feature_id(item)
+        if (
+            item.get("name") == spec["experiment"]
+            and owner not in (None, feature_id)
+            and str(item.get("status", "")).lower() != "completed"
+        ):
+            raise LabError(
+                f"Experiment {spec['experiment']!r} already exists on a different feature "
+                f"(id {owner}). Run: bash lab/run.sh reset"
+            )
+
+
+def _reconcile_feature_experiments(
+    api: AdminAPI,
+    dev_key: str,
+    spec: Dict[str, str],
+    feature_id: int,
+    segment_id: int,
+) -> Optional[Dict[str, Any]]:
+    reusable: Optional[Dict[str, Any]] = None
+    wanted_audience = [segment_id]
+    for item in active_experiments_for_feature(api, dev_key, feature_id):
+        detail = experiment_detail(api, dev_key, int(item["id"]))
+        status = str(detail.get("status", "")).lower()
+        audience = audience_segment_ids(detail)
+        if (
+            detail.get("name") == spec["experiment"]
+            and status == "created"
+            and audience == wanted_audience
+        ):
+            reusable = detail
+            print(
+                f"Experiment: reusing clean draft {detail.get('name')} "
+                f"(id {detail.get('id')}, audience {audience})"
+            )
+            continue
+        print(
+            f"Experiment: cleaning up {detail.get('name')} "
+            f"(id {detail.get('id')}, status {status}, audience {audience})"
+        )
+        remove_experiment(api, dev_key, detail)
+    return reusable
+
+
+def _create_draft(
+    api: AdminAPI,
+    dev_key: str,
+    spec: Dict[str, str],
+    feature: Dict[str, Any],
+    option: Dict[str, Any],
+    metric: Dict[str, Any],
+    segment: Dict[str, Any],
+) -> Dict[str, Any]:
+    try:
+        experiment = api.post(
+            f"/api/v1/environments/{dev_key}/experiments/",
+            experiment_payload(spec, feature, option, metric, segment),
+        )
+    except (ApiError, EngineError) as exc:
+        if "409" in str(exc) or "active experiment" in str(exc).lower():
+            raise LabError(
+                f"An active experiment still owns feature {feature.get('name')!r}: {exc}. "
+                "Run: bash lab/run.sh reset"
+            ) from exc
+        raise LabError(str(exc)) from exc
+    if not isinstance(experiment, dict) or experiment.get("id") is None:
+        raise LabError("Experiment creation returned an unexpected response")
+    print(
+        f"Experiment: created draft {experiment.get('name')} "
+        f"(id {experiment.get('id')}, audience {SEGMENT_NAME})"
+    )
+    return experiment_detail(api, dev_key, int(experiment["id"]))
+
+
+def _maybe_start_experiment(
+    api: AdminAPI,
+    dev_key: str,
+    spec: Dict[str, str],
+    experiment: Dict[str, Any],
+    start: bool,
+) -> Dict[str, Any]:
+    status = str(experiment.get("status", ""))
+    if start and status == "created":
+        try:
+            started = api.post(
+                f"/api/v1/environments/{dev_key}/experiments/{experiment['id']}/start/", {}
+            )
+        except (ApiError, EngineError) as exc:
+            raise LabError(
+                f"Starting experiment {spec['experiment']} failed: {exc}. Run: bash lab/run.sh reset"
+            ) from exc
+        if not isinstance(started, dict):
+            raise LabError(f"Starting experiment {spec['experiment']} returned an unexpected response")
+        print(f"Experiment: started {started.get('name')} (enrollment is now measurable)")
+        return started
+    if status == "created":
+        print("Experiment: left as draft (safe to retarget; pass --start to run it)")
+    elif status == "running":
+        print("Experiment: already running; audience is locked while running (re-targeting requires recreate)")
+    elif status in ("paused", "completed"):
+        print(f"Experiment: status is {status}; seeding will not modify it")
+    return experiment
 
 
 def ensure_experiment(
-    base_url: str,
-    token: str,
+    api: AdminAPI,
     dev_key: str,
     spec: Dict[str, str],
     feature: Dict[str, Any],
@@ -351,133 +316,23 @@ def ensure_experiment(
     segment: Dict[str, Any],
     start: bool,
 ) -> Dict[str, Any]:
-    """Converge the feature to one clean draft with the shared us_mobile audience.
-
-    A previous demo can leave running experiments; a rollback can leave
-    [rollback] drafts. Flagsmith rejects a second active experiment for a
-    feature with HTTP 409, so conflicting experiments are paused and removed
-    before the canonical draft is created. If repair fails, the error points
-    the operator at the one-command reset.
-    """
-    all_experiments = get_list(
-        "/environments/%s/experiments/" % dev_key, base_url=base_url, token=token
-    )
-    for item in all_experiments:
-        if (
-            item.get("name") == spec["experiment"]
-            and experiment_feature_id(item) not in (None, int(feature["id"]))
-            and str(item.get("status", "")).lower() != "completed"
-        ):
-            raise LabError(
-                "Experiment %r already exists on a different feature (id %s). "
-                "Run: bash lab/run.sh reset"
-                % (spec["experiment"], experiment_feature_id(item))
-            )
-
-    reusable: Optional[Dict[str, Any]] = None
-    wanted_audience = [int(segment["id"])]
-    for item in active_experiments_for_feature(base_url, token, dev_key, int(feature["id"])):
-        detail = experiment_detail(base_url, token, dev_key, int(item["id"]))
-        status = str(detail.get("status", "")).lower()
-        audience = audience_ids_from_detail(detail)
-        if (
-            detail.get("name") == spec["experiment"]
-            and status == "created"
-            and audience == wanted_audience
-        ):
-            reusable = detail
-            print(
-                "Experiment: reusing clean draft %s (id %s, audience %s)"
-                % (detail.get("name"), detail.get("id"), audience)
-            )
-            continue
-        print(
-            "Experiment: cleaning up %s (id %s, status %s, audience %s)"
-            % (detail.get("name"), detail.get("id"), status, audience)
-        )
-        remove_experiment(base_url, token, dev_key, detail)
-
-    if reusable is None:
-        try:
-            experiment = request_json(
-                "POST",
-                "/environments/%s/experiments/" % dev_key,
-                base_url=base_url,
-                token=token,
-                payload=experiment_payload(spec, feature, option, metric, segment),
-            )
-        except LabError as exc:
-            if "409" in str(exc) or "active experiment" in str(exc).lower():
-                raise LabError(
-                    "An active experiment still owns feature %r: %s. "
-                    "Run: bash lab/run.sh reset" % (feature.get("name"), exc)
-                ) from exc
-            raise
-        if not isinstance(experiment, dict):
-            raise LabError("Experiment creation returned an unexpected response")
-        print(
-            "Experiment: created draft %s (id %s, audience %s)"
-            % (experiment.get("name"), experiment.get("id"), SEGMENT_NAME)
-        )
-        experiment = experiment_detail(base_url, token, dev_key, int(experiment["id"]))
-    else:
-        experiment = reusable
-
-    status = str(experiment.get("status", ""))
-    if start and status == "created":
-        try:
-            experiment = request_json(
-                "POST",
-                "/environments/%s/experiments/%s/start/" % (dev_key, experiment["id"]),
-                base_url=base_url,
-                token=token,
-                payload={},
-            )
-        except LabError as exc:
-            raise LabError(
-                "Starting experiment %s failed: %s. Run: bash lab/run.sh reset"
-                % (spec["experiment"], exc)
-            ) from exc
-        if not isinstance(experiment, dict):
-            raise LabError("Starting experiment %s returned an unexpected response" % spec["experiment"])
-        print("Experiment: started %s (enrollment is now measurable)" % experiment.get("name"))
-    elif status == "created":
-        print("Experiment: left as draft (safe to retarget; pass --start to run it)")
-    elif status == "running":
-        print("Experiment: already running; audience changes now require a pause")
-    elif status in ("paused", "completed"):
-        print("Experiment: status is %s; seeding will not modify it" % status)
-    return experiment
+    """Converge the feature to one clean draft with the shared us_mobile audience."""
+    feature_id = int(feature["id"])
+    _guard_cross_feature_name(api, dev_key, spec, feature_id)
+    reusable = _reconcile_feature_experiments(api, dev_key, spec, feature_id, int(segment["id"]))
+    experiment = reusable or _create_draft(api, dev_key, spec, feature, option, metric, segment)
+    return _maybe_start_experiment(api, dev_key, spec, experiment, start)
 
 
 def current_audience_ids(
-    base_url: str,
-    token: str,
-    dev_key: str,
-    experiment_id: int,
-    fallback: List[int],
+    api: AdminAPI, dev_key: str, experiment_id: int, fallback: List[int]
 ) -> List[int]:
     """Read the audience actually stored on the experiment, not the seed intent."""
     try:
-        detail = request_json(
-            "GET",
-            "/environments/%s/experiments/%s/" % (dev_key, experiment_id),
-            base_url=base_url,
-            token=token,
-        )
+        detail = experiment_detail(api, dev_key, experiment_id)
     except LabError:
         return fallback
-    rollout = (detail or {}).get("experiment_rollout") or {}
-    audience = rollout.get("audience") or {}
-    segments = audience.get("segments") or []
-    ids = sorted(
-        {
-            int(segment["id"])
-            for segment in segments
-            if isinstance(segment, dict) and segment.get("id") is not None
-        }
-    )
-    return ids or fallback
+    return audience_segment_ids(detail) or fallback
 
 
 def parse_args() -> argparse.Namespace:
@@ -494,63 +349,64 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    env = load_env()
-    base_url = (args.api_url or env.get("LAB_API_URL") or env.get("FLAGSMITH_API_URL") or DEFAULT_API_URL).rstrip("/")
-    api_base = base_url + "/api/v1"
-    token = require(
-        args.token or env.get("LAB_ADMIN_TOKEN") or env.get("FLAGSMITH_API_KEY"),
-        "No admin token. Run: python3 lab/bootstrap.py",
+def _resolve_credential(args: argparse.Namespace, env: Dict[str, str]) -> Tuple[str, str]:
+    if args.token:
+        scheme = "Api-Key" if args.token.startswith("ser.") else "Token"
+        return args.token, scheme
+    master_key = env.get("LAB_ADMIN_API_KEY") or env.get("FLAGSMITH_API_KEY")
+    if master_key:
+        return master_key, "Api-Key"
+    token = require(env.get("LAB_ADMIN_TOKEN"), "No admin token. Run: python3 lab/bootstrap.py")
+    return token, "Token"
+
+
+def _resolve_context(args: argparse.Namespace, env: Dict[str, str]) -> Dict[str, Any]:
+    base_url = (
+        args.api_url or env.get("LAB_API_URL") or env.get("FLAGSMITH_API_URL") or DEFAULT_API_URL
+    ).rstrip("/")
+    credential, scheme = _resolve_credential(args, env)
+    project_id = args.project_id or int(
+        require(env.get("LAB_PROJECT_ID"), "LAB_PROJECT_ID missing; run bootstrap first")
     )
-    project_id = args.project_id or int(require(env.get("LAB_PROJECT_ID"), "LAB_PROJECT_ID missing; run bootstrap first"))
-    dev_key = args.dev_key or env.get("LAB_DEV_ENV_KEY")
+    dev_key = args.dev_key or env.get("LAB_DEV_ENV_KEY") or ""
+    config = Config(api_url=base_url, admin_key=credential, env_key=dev_key, project=str(project_id))
+    api = _LabAdminAPI(config, auth_scheme=scheme)
     if not dev_key:
-        environments = get_list(
-            "/environments/?project=%d" % project_id, base_url=api_base, token=token
-        )
-        dev = find_by_name(environments, DEV_NAME)
+        envs = api.get_all(f"/api/v1/environments/?project={project_id}")
+        dev = find_by_name(envs, DEV_NAME)
         dev_key = require((dev or {}).get("api_key"), "Development environment not found")
-        env["LAB_DEV_ENV_KEY"] = dev_key
-    dev_id = env.get("LAB_DEV_ENV_ID", "")
-    project_name = env.get("LAB_PROJECT_NAME", "")
+        config.env_key = dev_key
+    return {
+        "base_url": base_url,
+        "api": api,
+        "project_id": project_id,
+        "dev_key": dev_key,
+        "dev_id": env.get("LAB_DEV_ENV_ID", ""),
+        "project_name": env.get("LAB_PROJECT_NAME", ""),
+    }
 
-    print("Experiment Isolation Lab seed")
-    print("  API:   %s" % base_url)
-    print("  Env:   %s" % ENV_PATH)
-    print("  Mode:  %s" % ("draft + started" if args.start else "draft only"))
-    print("")
 
-    feature_records: List[Dict[str, Any]] = []
-    for spec in FEATURES:
-        feature, option = ensure_feature(api_base, token, project_id, spec)
-        feature_records.append({"spec": spec, "feature": feature, "option": option})
-
-    segment = ensure_segment(api_base, token, project_id)
-    metric = ensure_metric(api_base, token, dev_key)
-
-    experiments: List[Dict[str, Any]] = []
+def _seed_experiments(
+    api: AdminAPI,
+    dev_key: str,
+    feature_records: List[Dict[str, Any]],
+    metric: Dict[str, Any],
+    segment: Dict[str, Any],
+    start: bool,
+) -> List[Dict[str, Any]]:
     state_experiments: List[Dict[str, Any]] = []
     for record in feature_records:
         experiment = ensure_experiment(
-            api_base,
-            token,
+            api,
             dev_key,
             record["spec"],
             record["feature"],
             record["option"],
             metric,
             segment,
-            args.start,
+            start,
         )
-        experiments.append(experiment)
-        audience_ids = current_audience_ids(
-            api_base,
-            token,
-            dev_key,
-            int(experiment["id"]),
-            [int(segment["id"])],
-        )
+        audience_ids = current_audience_ids(api, dev_key, int(experiment["id"]), [int(segment["id"])])
         state_experiments.append(
             {
                 "id": experiment["id"],
@@ -561,40 +417,42 @@ def main() -> int:
                 "rollout_percentage": 100,
             }
         )
+    return state_experiments
 
-    # A previous demo leaves exp_iso_* bucket segments behind. Remove only
-    # those; never touch the shared us_mobile segment or unrelated segments.
-    cleanup_bucket_segments(api_base, token, project_id)
 
-    state = {
+def _build_state(
+    ctx: Dict[str, Any],
+    segment: Dict[str, Any],
+    metric: Dict[str, Any],
+    state_experiments: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    dev_id = ctx["dev_id"]
+    return {
         "generated_at": now_iso(),
         "environment": {
             "id": int(dev_id) if str(dev_id).isdigit() else None,
             "name": DEV_NAME,
-            "key_prefix": dev_key[:4],
+            "key_prefix": ctx["dev_key"][:4],
         },
-        "project": {"id": project_id, "name": project_name},
+        "project": {"id": ctx["project_id"], "name": ctx["project_name"]},
         "segment": {"id": segment["id"], "name": segment.get("name", SEGMENT_NAME)},
         "metric": {"id": metric["id"], "name": metric.get("name", METRIC_NAME)},
         "experiments": state_experiments,
         "sample_traits": SAMPLE_TRAITS,
         "notes": "Both drafts intentionally share the us_mobile segment.",
     }
-    write_json(STATE_PATH, state)
 
+
+def _print_summary(state_experiments: List[Dict[str, Any]]) -> None:
     print("")
-    print("Seeded %d experiments in %s." % (len(experiments), DEV_NAME))
+    print(f"Seeded {len(state_experiments)} experiments in {DEV_NAME}.")
     for record in state_experiments:
+        segs = ", ".join(str(v) for v in record.get("audience_segment_ids") or [])
         print(
-            "  - %s (id %s): %s, audience segment(s) %s"
-            % (
-                record.get("name"),
-                record.get("id"),
-                record.get("status"),
-                ", ".join(str(value) for value in record.get("audience_segment_ids") or []),
-            )
+            f"  - {record.get('name')} (id {record.get('id')}): "
+            f"{record.get('status')}, audience segment(s) {segs}"
         )
-    print("  State: %s" % STATE_PATH)
+    print(f"  State: {STATE_PATH}")
     audiences = [tuple(record.get("audience_segment_ids") or []) for record in state_experiments]
     if audiences and all(audience == audiences[0] for audience in audiences):
         print("  All experiments share the same audience segment(s): overlap is expected.")
@@ -606,14 +464,43 @@ def main() -> int:
         print("  Audiences are disjoint across experiments.")
     else:
         print("  Audiences differ; inspect the dashboard for pairwise overlap.")
+
+
+def main() -> int:
+    args = parse_args()
+    ctx = _resolve_context(args, load_env())
+    api, project_id, dev_key = ctx["api"], ctx["project_id"], ctx["dev_key"]
+    mode = "draft + started" if args.start else "draft only"
+    print("Experiment Isolation Lab seed")
+    print(f"  API:   {ctx['base_url']}")
+    print(f"  Env:   {ENV_PATH}")
+    print(f"  Mode:  {mode}\n")
+
+    feature_records: List[Dict[str, Any]] = []
+    for spec in FEATURES:
+        ensured = ensure_feature_with_variant(api, project_id, spec)
+        feature, option = ensured["feature"], ensured["variant"]
+        print(f"Feature: {feature.get('name')} (id {feature.get('id')}, variant {spec['variant']})")
+        feature_records.append({"spec": spec, "feature": feature, "option": option})
+
+    segment = ensure_us_mobile_segment(api, project_id)
+    print(f"Segment: {segment.get('name', SEGMENT_NAME)} (id {segment.get('id')})")
+    metric = ensure_purchase_metric(api, dev_key)
+    print(f"Metric: {metric.get('name', METRIC_NAME)} (id {metric.get('id')})")
+
+    state_experiments = _seed_experiments(api, dev_key, feature_records, metric, segment, args.start)
+    # Remove only stale exp_iso_* bucket segments; keep us_mobile and unrelated segments.
+    cleanup_bucket_segments(api, project_id)
+    write_json(STATE_PATH, _build_state(ctx, segment, metric, state_experiments))
+    _print_summary(state_experiments)
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except LabError as exc:
-        print("seed: error: %s" % exc, file=sys.stderr)
+    except (LabError, EngineError) as exc:
+        print(f"seed: error: {exc}", file=sys.stderr)
         sys.exit(2)
     except KeyboardInterrupt:
         print("seed: interrupted", file=sys.stderr)

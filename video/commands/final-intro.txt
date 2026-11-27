@@ -1,2 +1,0 @@
-ls -l skills/experiment-isolation/SKILL.md
-python3 -m engine.cli --help | head -12

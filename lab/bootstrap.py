@@ -19,11 +19,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import secrets
 import string
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 from lablib import (
@@ -123,7 +124,7 @@ def create_admin(base_url: str, email: str, password: str) -> str:
 
 def ensure_admin(
     base_url: str, version: Dict[str, Any], env: Dict[str, str]
-) -> tuple:
+) -> Tuple[str, str, str]:
     """Create the first superuser or reuse the one recorded in lab/.env."""
     existing_token = env.get("LAB_ADMIN_TOKEN", "")
     if has_users(version):
@@ -139,20 +140,20 @@ def ensure_admin(
                 "  docker compose -p isolation-lab -f lab/docker-compose.yml down -v"
             )
         token = login(base_url, email, password)
-        print("Admin: logged in as %s" % email)
+        print(f"Admin: logged in as {email}")
         return token, email, password
 
     email = env.get("LAB_ADMIN_EMAIL", DEFAULT_EMAIL)
     password = env.get("LAB_ADMIN_PASSWORD") or generate_password()
     try:
         token = create_admin(base_url, email, password)
-        print("Admin: created superuser %s" % email)
+        print(f"Admin: created superuser {email}")
     except LabError as exc:
         # A race with another bootstrap is the only expected reason to get here.
         if "already" not in str(exc).lower() and "exists" not in str(exc).lower():
             raise
         token = login(base_url, email, password)
-        print("Admin: user already existed, logged in as %s" % email)
+        print(f"Admin: user already existed, logged in as {email}")
     return token, email, password
 
 
@@ -166,7 +167,7 @@ def ensure_org(base_url: str, token: str, env: Dict[str, str]) -> Dict[str, Any]
     )
     if not isinstance(org, dict):
         raise LabError("Organisation creation returned an unexpected response")
-    print("Organisation: created %s" % name)
+    print(f"Organisation: created {name}")
     return org
 
 
@@ -176,7 +177,7 @@ def ensure_project(
     name = env.get("LAB_PROJECT_NAME", DEFAULT_PROJECT_NAME)
     try:
         projects = get_list(
-            "/organisations/%d/projects/" % org_id, base_url=base_url, token=token
+            f"/organisations/{org_id}/projects/", base_url=base_url, token=token
         )
     except LabError:
         projects = [
@@ -196,7 +197,7 @@ def ensure_project(
     )
     if not isinstance(project, dict):
         raise LabError("Project creation returned an unexpected response")
-    print("Project: created %s" % name)
+    print(f"Project: created {name}")
     return project
 
 
@@ -204,7 +205,7 @@ def ensure_environment(
     base_url: str, token: str, project_id: int, name: str
 ) -> Dict[str, Any]:
     environments = get_list(
-        "/environments/?project=%d" % project_id, base_url=base_url, token=token
+        f"/environments/?project={project_id}", base_url=base_url, token=token
     )
     environment = find_by_name(environments, name)
     if environment:
@@ -218,7 +219,7 @@ def ensure_environment(
     )
     if not isinstance(environment, dict):
         raise LabError("Environment creation returned an unexpected response")
-    print("Environment: created %s" % name)
+    print(f"Environment: created {name}")
     return environment
 
 
@@ -233,17 +234,15 @@ def ensure_warehouse(
             "  bash lab/run.sh"
         )
     key = require(environment.get("api_key"), "Environment is missing its API key")
-    path = "/environments/%s/warehouse-connections/" % key
-    connections = get_list(path, base_url=base_url, token=token)
-    for connection in connections:
+    path = f"/environments/{key}/warehouse-connections/"
+    for connection in get_list(path, base_url=base_url, token=token):
         if connection.get("warehouse_type") != "postgres":
             continue
         status = str(connection.get("status", "")).lower()
         if status == "connected":
             return status
         # A previous bootstrap may have created the row but failed the test.
-        # Re-post below; if the unique constraint rejects it, report clearly.
-        print("Warehouse: found an existing Postgres connection in status %r" % status)
+        print(f"Warehouse: found an existing Postgres connection in status {status!r}")
         break
 
     body = request_json(
@@ -259,9 +258,8 @@ def ensure_warehouse(
     status = str((body or {}).get("status", "")).lower() if isinstance(body, dict) else ""
     if status != "connected":
         raise LabError(
-            "Warehouse connection did not reach status=connected (got %r).\n"
+            f"Warehouse connection did not reach status=connected (got {status or 'no status'!r}).\n"
             "  Check: docker compose -p isolation-lab -f lab/docker-compose.yml logs --tail=40 flagsmith"
-            % (status or "no status")
         )
     return status
 
@@ -275,7 +273,7 @@ def ensure_admin_key(
         return existing
     body = request_json(
         "POST",
-        "/organisations/%d/master-api-keys/" % org_id,
+        f"/organisations/{org_id}/master-api-keys/",
         base_url=base_url,
         token=token,
         payload={"name": ADMIN_KEY_NAME, "is_admin": True},
@@ -302,7 +300,7 @@ def update_env(
     admin_key: str,
 ) -> None:
     parsed = urlparse(base_url)
-    host = parsed.hostname or "localhost"
+    host = re.sub(r"[^A-Za-z0-9]", "_", parsed.hostname or "localhost")
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     env.update(
         {
@@ -322,14 +320,13 @@ def update_env(
             "FLAGSMITH_API_URL": base_url,
             "FLAGSMITH_API_KEY": admin_key,
             "FLAGSMITH_ENVIRONMENT_KEY": str(dev.get("api_key", "")),
-            # Compatibility with the engine CLI / Flagsmith CLI conventions.
             "DEV_ENV_KEY": str(dev.get("api_key", "")),
             "PROD_ENV_KEY": str(prod.get("api_key", "")),
             "FLAGSMITH_PROJECT": str(project.get("name", "")),
+            f"FLAGSMITH_API_KEY_{host}_{port}": admin_key,
         }
     )
-    env["FLAGSMITH_API_KEY_%s_%s" % (host, port)] = admin_key
-    if (host, port) != ("localhost", 8010):
+    if (parsed.hostname, port) != ("localhost", 8010):
         env["FLAGSMITH_API_KEY_localhost_8010"] = admin_key
 
 
@@ -338,7 +335,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--api-url",
         default=os.environ.get("LAB_API_URL", DEFAULT_API_URL),
-        help="Flagsmith base URL (default: %(default)s)",
+        help=f"Flagsmith base URL (default: {DEFAULT_API_URL})",
     )
     parser.add_argument(
         "--timeout",
@@ -349,30 +346,51 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> int:
-    args = parse_args()
-    base_url = args.api_url.rstrip("/")
-    api_base = base_url + "/api/v1"
-    env = load_env()
-    print("Experiment Isolation Lab bootstrap")
-    print("  API: %s" % base_url)
-    print("  Env: %s (mode 600)" % ENV_PATH)
-    wait_for_url(base_url + "/health/liveness/", args.timeout, "Flagsmith API")
-    # Give the Django URL configuration a moment after the liveness endpoint is
-    # up; the first auth call can otherwise race worker startup.
-    time.sleep(1.5)
-
+def _check_experimentation(base_url: str) -> Tuple[Dict[str, Any], bool]:
     version = version_payload(base_url)
     experimentation_enabled = bool(version.get("experimentation_enabled"))
     image_tag = version.get("image_tag") or "unknown"
-    print("  Version: %s; experimentation enabled: %s" % (image_tag, experimentation_enabled))
+    print(f"  Version: {image_tag}; experimentation enabled: {experimentation_enabled}")
     if not experimentation_enabled:
         raise LabError(
             "This Flagsmith instance was started with experimentation disabled.\n"
             "  The lab Compose file sets EXPERIMENTATION_ENABLED=true; recreate it with:\n"
             "  docker compose -p isolation-lab -f lab/docker-compose.yml down -v && bash lab/run.sh"
         )
+    return version, experimentation_enabled
 
+
+def _print_summary(
+    base_url: str,
+    org: Dict[str, Any],
+    project: Dict[str, Any],
+    dev_status: str,
+    prod_status: str,
+) -> None:
+    print("")
+    print("Lab ready.")
+    print(f"  Flagsmith:      {base_url}")
+    print(f"  Organisation:   {org.get('name')} (id {org.get('id')})")
+    print(f"  Project:        {project.get('name')} (id {project.get('id')})")
+    print(f"  Environments:   {DEV_NAME}, {PROD_NAME} (keys saved to lab/.env)")
+    print(f"  Warehouse:      Development={dev_status}, Production={prod_status}")
+    print("  Secrets:        saved to lab/.env (chmod 600, gitignored)")
+    print("  Next:           python3 lab/seed/seed.py")
+
+
+def main() -> int:
+    args = parse_args()
+    base_url = args.api_url.rstrip("/")
+    api_base = f"{base_url}/api/v1"
+    env = load_env()
+    print("Experiment Isolation Lab bootstrap")
+    print(f"  API: {base_url}")
+    print(f"  Env: {ENV_PATH} (mode 600)")
+    wait_for_url(f"{base_url}/health/liveness/", args.timeout, "Flagsmith API")
+    # Allow Django URL configuration to finish loading after liveness turns 200.
+    time.sleep(1.5)
+
+    version, experimentation_enabled = _check_experimentation(base_url)
     token, email, password = ensure_admin(api_base, version, env)
     env.update({"LAB_ADMIN_EMAIL": email, "LAB_ADMIN_PASSWORD": password, "LAB_ADMIN_TOKEN": token})
     write_env(env)
@@ -387,16 +405,7 @@ def main() -> int:
 
     update_env(env, base_url, email, password, token, org, project, dev, prod, admin_key)
     write_env(env)
-
-    print("")
-    print("Lab ready.")
-    print("  Flagsmith:      %s" % base_url)
-    print("  Organisation:   %s (id %s)" % (org.get("name"), org.get("id")))
-    print("  Project:        %s (id %s)" % (project.get("name"), project.get("id")))
-    print("  Environments:   %s, %s (keys saved to lab/.env)" % (DEV_NAME, PROD_NAME))
-    print("  Warehouse:      Development=%s, Production=%s" % (dev_status, prod_status))
-    print("  Secrets:        saved to lab/.env (chmod 600, gitignored)")
-    print("  Next:           python3 lab/seed/seed.py")
+    _print_summary(base_url, org, project, dev_status, prod_status)
     return 0
 
 
@@ -404,7 +413,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except LabError as exc:
-        print("bootstrap: error: %s" % exc, file=sys.stderr)
+        print(f"bootstrap: error: {exc}", file=sys.stderr)
         sys.exit(2)
     except KeyboardInterrupt:
         print("bootstrap: interrupted", file=sys.stderr)

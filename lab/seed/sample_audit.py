@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -26,56 +26,55 @@ DEFAULT_SAMPLE = DASHBOARD_DIR / "audit.sample.json"
 DEFAULT_OUT = DASHBOARD_DIR / "audit.json"
 
 
-def build_from_state(state: Dict[str, Any], threshold: float, reason: str) -> Dict[str, Any]:
-    experiments: List[Dict[str, Any]] = list(state.get("experiments") or [])
-    if not experiments:
-        raise LabError("seed state has no experiments; run python3 lab/seed/seed.py first")
+def _audience_ids(experiment: Dict[str, Any]) -> Set[int]:
+    return {
+        int(value)
+        for value in (experiment.get("audience_segment_ids") or [])
+        if str(value).isdigit()
+    }
 
-    def audience(experiment: Dict[str, Any]) -> set:
-        return {
-            int(value)
-            for value in (experiment.get("audience_segment_ids") or [])
-            if str(value).isdigit()
-        }
 
-    def pair_jaccard(left: Dict[str, Any], right: Dict[str, Any]) -> float:
-        left_ids = audience(left)
-        right_ids = audience(right)
-        if not left_ids or not right_ids:
-            return 1.0
-        if left_ids == right_ids:
-            return 1.0
-        if left_ids.isdisjoint(right_ids):
-            return 0.0
-        # Partial segment overlap is unknown without identities; use a midpoint.
-        return 0.5
+def _pair_jaccard(left: Dict[str, Any], right: Dict[str, Any]) -> float:
+    left_ids = _audience_ids(left)
+    right_ids = _audience_ids(right)
+    if not left_ids or not right_ids or left_ids == right_ids:
+        return 1.0
+    if left_ids.isdisjoint(right_ids):
+        return 0.0
+    # Partial segment overlap is unknown without identities; use a midpoint.
+    return 0.5
 
-    overlaps = []
+
+def _build_overlaps(experiments: List[Dict[str, Any]], threshold: float) -> List[Dict[str, Any]]:
+    overlaps: List[Dict[str, Any]] = []
     for left_index, left in enumerate(experiments):
         for right in experiments[left_index + 1 :]:
-            jaccard = pair_jaccard(left, right)
+            jaccard = _pair_jaccard(left, right)
             shared = int(round(500 * jaccard / (1 + jaccard))) if jaccard > 0 else 0
-            union = 500 - shared
             overlaps.append(
                 {
                     "a": left["id"],
                     "b": right["id"],
                     # The seeded population is 50% US/mobile. Illustrative only.
                     "shared": shared,
-                    "union": union,
+                    "union": 500 - shared,
                     "jaccard": jaccard,
                     "a_rate": 0.5,
                     "b_rate": 0.5,
                     "verdict": "collision" if jaccard > threshold else "isolated",
                 }
             )
+    return overlaps
 
-    collisions = [
-        [overlap["a"], overlap["b"]]
-        for overlap in overlaps
-        if overlap["jaccard"] > threshold
-    ]
-    max_jaccard = max([overlap["jaccard"] for overlap in overlaps] or [0.0])
+
+def build_from_state(state: Dict[str, Any], threshold: float, reason: str) -> Dict[str, Any]:
+    experiments: List[Dict[str, Any]] = list(state.get("experiments") or [])
+    if not experiments:
+        raise LabError("seed state has no experiments; run python3 lab/seed/seed.py first")
+
+    overlaps = _build_overlaps(experiments, threshold)
+    collisions = [[ov["a"], ov["b"]] for ov in overlaps if ov["jaccard"] > threshold]
+    max_jaccard = max([ov["jaccard"] for ov in overlaps] or [0.0])
     verdict = "collision" if collisions else "isolated"
     segment = state.get("segment") or {}
     return {
@@ -144,8 +143,8 @@ def main() -> int:
             }
         )
     write_json(args.out, audit)
-    print("Sample audit written to %s" % args.out)
-    print("  Source: sample (%s)" % args.reason)
+    print(f"Sample audit written to {args.out}")
+    print(f"  Source: sample ({args.reason})")
     print("  This is illustrative; it will be replaced by engine.cli audit when available.")
     return 0
 
@@ -154,7 +153,7 @@ if __name__ == "__main__":
     try:
         sys.exit(main())
     except LabError as exc:
-        print("sample_audit: error: %s" % exc, file=sys.stderr)
+        print(f"sample_audit: error: {exc}", file=sys.stderr)
         sys.exit(2)
     except KeyboardInterrupt:
         print("sample_audit: interrupted", file=sys.stderr)

@@ -288,7 +288,7 @@ body.isolated h1 { color: var(--lime); }
     } else {
       overlaps.forEach(function (overlap) {
         var value = Number(overlap.jaccard);
-        if (String(overlap.verdict || "").toLowerCase() === "collision" || value > threshold) {
+        if (String(overlap.verdict || "").toLowerCase() === "collision" || (value > 0 && value >= threshold)) {
           collisionPairs.push([overlap.a, overlap.b]);
         }
       });
@@ -304,7 +304,7 @@ body.isolated h1 { color: var(--lime); }
 
     var verdict = String(audit.verdict || "").toLowerCase();
     if (!verdict) {
-      verdict = collisionPairs.length || maxJaccard > threshold ? "collision" : "isolated";
+      verdict = collisionPairs.length || (maxJaccard > 0 && maxJaccard >= threshold) ? "collision" : "isolated";
     }
     if (verdict !== "collision" && verdict !== "isolated") { verdict = "isolated"; }
 
@@ -321,12 +321,12 @@ body.isolated h1 { color: var(--lime); }
     } else if (state.verify && state.verify.after_jaccard !== undefined) {
       afterEvidence = {
         maxJaccard: Number(state.verify.after_jaccard),
-        verdict: Number(state.verify.after_jaccard) > threshold ? "collision" : "isolated",
+        verdict: (Number(state.verify.after_jaccard) > 0 && Number(state.verify.after_jaccard) >= threshold) ? "collision" : "isolated",
         source: "verify.json"
       };
     }
     if (afterEvidence && afterEvidence.verdict !== "collision" && afterEvidence.verdict !== "isolated") {
-      afterEvidence.verdict = afterEvidence.maxJaccard > threshold ? "collision" : "isolated";
+      afterEvidence.verdict = (afterEvidence.maxJaccard > 0 && afterEvidence.maxJaccard >= threshold) ? "collision" : "isolated";
     }
     var displayJaccard = afterEvidence ? afterEvidence.maxJaccard : maxJaccard;
     var displayVerdict = afterEvidence ? afterEvidence.verdict : verdict;
@@ -445,7 +445,7 @@ body.isolated h1 { color: var(--lime); }
           return;
         }
         var jaccard = Number(overlap.jaccard);
-        var cssClass = jaccard > model.threshold ? "collision" : (jaccard === 0 ? "clear" : "watch");
+        var cssClass = jaccard === 0 ? "clear" : (jaccard >= model.threshold ? "collision" : "watch");
         html += "<td class='" + cssClass + "'><strong>" + pct(jaccard) + "</strong><small>" +
           number(overlap.shared) + " / " + number(overlap.union) + "</small></td>";
       });
@@ -460,7 +460,8 @@ body.isolated h1 { color: var(--lime); }
 
   function verdictFor(jaccard, threshold) {
     if (jaccard === null || jaccard === undefined || isNaN(Number(jaccard))) { return "not measured"; }
-    return Number(jaccard) > threshold ? "collision" : "isolated";
+    var value = Number(jaccard);
+    return (value > 0 && value >= threshold) ? "collision" : "isolated";
   }
 
   function beforeAfter(model) {
@@ -518,10 +519,16 @@ body.isolated h1 { color: var(--lime); }
     var verify = state.verify;
     var rows = [];
     if (receipt) {
+      var counts = receipt.token_count;
+      var receiptTokens = counts && typeof counts === "object" && counts.receipt !== undefined
+        ? Number(counts.receipt)
+        : (typeof counts === "number" ? counts : Math.ceil(JSON.stringify(receipt).length / 4));
+      var workflowTotal = typeof counts === "number" ? counts : tokenTotal(counts);
       rows.push(["receipt.json", "loaded"]);
       rows.push(["pass", String(Boolean(receipt.pass))]);
       rows.push(["changes", number(Array.isArray(receipt.changes) ? receipt.changes.length : receipt.changes)]);
-      rows.push(["token count", number(tokenTotal(receipt.token_count))]);
+      rows.push(["receipt est. tokens", number(receiptTokens)]);
+      rows.push(["workflow artifacts est.", number(workflowTotal)]);
       rows.push(["rollback steps", number(Array.isArray(receipt.rollback) ? receipt.rollback.length : 0)]);
     } else if (verify) {
       rows.push(["verify.json", "loaded"]);
@@ -546,18 +553,19 @@ body.isolated h1 { color: var(--lime); }
 
   function renderRunbook(model) {
     var commands = [
+      "source lab/.env && export PYTHONPATH=\"skills/experiment-isolation/scripts${PYTHONPATH:+:$PYTHONPATH}\"",
       "python3 -m engine.cli audit --env \"$LAB_DEV_ENV_KEY\" --samples 500 --threshold 0.05 --out lab/dashboard/audit.json",
       "python3 -m engine.cli plan --audit lab/dashboard/audit.json --out lab/dashboard/plan.json",
       "python3 -m engine.cli apply --plan lab/dashboard/plan.json --approve \"<token>\" --out lab/dashboard/apply.json",
-      "python3 -m engine.cli verify --plan lab/dashboard/plan.json --samples 500 --out lab/dashboard/verify.json",
-      "python3 -m engine.cli receipt --audit lab/dashboard/audit.json --plan lab/dashboard/plan.json --verify lab/dashboard/verify.json --out lab/dashboard/receipt.json"
+      "python3 -m engine.cli verify --plan lab/dashboard/plan.json --samples 500 --workers 2 --out lab/dashboard/verify.json",
+      "python3 -m engine.cli receipt --audit lab/dashboard/audit.json --plan lab/dashboard/plan.json --apply lab/dashboard/apply.json --verify lab/dashboard/verify.json --out lab/dashboard/receipt.json"
     ];
     var html = "";
     if (model.sample) {
-      html += "<div class='note'>This is sample data. Run <code>bash lab/run.sh audit</code> after engine.cli lands to replace it with a measured audit.</div>";
+      html += "<div class='note'>This is sample data. Run <code>bash lab/run.sh audit</code> to replace it with a measured audit.</div>";
     }
     html += commands.map(commandLine).join("");
-    html += "<div class='ba-note'>The full loop is approval gated. The dashboard never applies changes; it only reads the audit and evidence files.</div>";
+    html += "<div class='ba-note'>The full loop is approval gated (or use <code>bash skills/experiment-isolation/scripts/run.sh</code> from any directory). The dashboard never applies changes; it only reads the audit and evidence files.</div>";
     $("runbook").innerHTML = html;
   }
 

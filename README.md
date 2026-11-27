@@ -1,211 +1,159 @@
 # Experiment Isolation
 
-**Outcome:** a Flagsmith Agent Skill that proves which experiments share users, refuses to launch the unsafe ones, and makes their audiences disjoint with one approved change — then verifies the result and emits a receipt.
+[![CI](https://img.shields.io/github/actions/workflow/status/pranavk429/experiment-isolation/ci.yml?branch=master&label=CI)](.github/workflows/ci.yml)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB)](pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Agent Skills](https://img.shields.io/badge/Agent_Skills-compatible-6e5494)](skills/experiment-isolation/SKILL.md)
 
-**Links:** Repository: https://github.com/pranavk429/experiment-isolation · Demo video: `TODO — add public YouTube/Loom URL` · [Lab](lab/) · [Track 3 answers](docs/submission.md#track-3--build-on-open-source-flagsmith) · [Track 4 answers](docs/submission.md#track-4--flagsmith-agent-skills) · [Demo script](docs/demo-script.md) · [Judging map](docs/judging-map.md)
+Pre-launch audience collision detection, HMAC-gated mutual exclusion, and post-launch overlap verification for Flagsmith experiments—packaged as a self-contained Agent Skill, zero-dependency Python CLI, and self-hosted lab.
 
-> **What it is:** an audit-and-apply loop for Flagsmith experiments, packaged as an Agent Skill and a stdlib CLI.
->
-> **Does it work:** the run proves it: `pytest` passes, `apply` ensures segments and patches audiences, `verify` reports `after_jaccard: 0.0`, and `receipt.pass` is `true`. Recorded values are in [Results](#results-and-evidence); only the harness total is `TODO`.
->
-> **Verify it:** run the five commands in [Setup and run](#setup-and-run), or watch the 2:45 demo.
+```console
+$ experiment-isolation audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
+audit: 2 experiment(s), 1 collision(s), sample=500, verdict=collision -> audit.json
+$ echo $?
+10
 
-**Hero proof (to record):** `docs/assets/hero-before-after.gif` — 6 s, 1280×720. Left: red overlap matrix before, cell at the measured Jaccard, label `collision`. Right: green matrix after `apply` + `verify`, measured Jaccard, receipt footer `"pass": true`. Caption: "Seeded demo data; values from Results." Record after it passes.
+$ experiment-isolation plan --audit audit.json --out plan.json
+plan: feasible=True, 2 audience change(s), width=50, token=iso-4a8e91c2, before_jaccard=1.0 -> plan.json
 
-<!-- TODO: add docs/assets/hero-before-after.gif and replace this comment with the image embed. -->
+$ experiment-isolation apply --plan plan.json --approve iso-00000000 --out apply.json
+{"error":"Approval token does not match this plan; nothing was changed","exit_code":10}
+refused: Approval token does not match this plan; nothing was changed
+$ echo $?
+10
 
-## Problem
+$ experiment-isolation apply --plan plan.json --approve iso-4a8e91c2 --out apply.json
+apply: 2 experiment(s) running; steps=6; segments created=2 reused=0; pass=True -> apply.json
 
-Run two or more experiments on the same users and every result is contaminated. A user in both the pricing-banner and onboarding-tip tests sees both changes; lift attributed to one may come from the other. It compounds with each test.
+$ experiment-isolation verify --plan plan.json --samples 500 --workers 2 --out verify.json
+verify: before=1.0 after=0.0 pass=True sample=500 -> verify.json
+$ jq '{after_jaccard, pass, segments: ["exp_iso_us_mobile_0_49", "exp_iso_us_mobile_50_99"]}' verify.json
+{"after_jaccard":0.0,"pass":true,"segments":["exp_iso_us_mobile_0_49","exp_iso_us_mobile_50_99"]}
 
-Flagsmith 2.291.0 has no native mutual exclusion. An experiment audience holds one segment (`MAX_AUDIENCE_SEGMENTS = 1`), and two experiments can name the same one. Audience segments cannot use `PERCENTAGE_SPLIT`, audiences cannot change while the rollout is enabled, and running experiments cannot change audiences. Teams find the overlap after the numbers look strange.
+$ experiment-isolation receipt --audit audit.json --plan plan.json --apply apply.json --verify verify.json --out receipt.json
+receipt: before=collision after=isolated pass=True -> receipt.json
+$ python3 skills/experiment-isolation/scripts/token_count.py receipt.json
+121
+```
 
-## What it does
-
-1. **Audit** — read-only. Lists non-completed experiments, samples identities, persists traits via the Flagsmith CLI, and reads enrollment from `metadata.experiment.in_experiment`. Exits `10` on collision (the expected gate signal) and still writes JSON; `0` is clear/none.
-2. **N-way overlap matrix** — every experiment pair's `shared`, `union`, `jaccard`, enrollment rates, multi-exposure rate, and a `collision` verdict against a threshold (default `0.05`).
-3. **Refuse** — `apply` exits `10` when overlap exceeds the threshold, the approval token is missing or wrong, or an experiment is not a draft. No mutation on refusal.
-4. **N-way bucket-segment isolation** — contiguous ranges over `flagsmith_experiment_bucket` (0–99), up to `--max-concurrent 4` drafts by default and at least `--min-bucket-width 5` buckets each. Two-way uses `[0,49]`/`[50,99]`; the 3-way stress run used `[0,32]`/`[33,65]`/`[66,99]`.
-5. **Approve** — the plan carries an HMAC-bound token; `apply` re-derives it and rejects an edited plan with a recomputed public token. Undo with `python3 -m engine.cli rollback --apply apply.json`.
-6. **Apply** — ensures segments (create/reuse), disables the rollout, patches the audience, and starts; start re-enables.
-7. **Verify** — resamples, recomputes N-way overlap for planned drafts, and requires `after_jaccard == 0.0`.
-8. **Receipt** — compact JSON (121 tokens for the 2-way demo; 3-way stress 125; `o200k_base`): sample size, before/after, changes, rollback reference, token counts, `pass`.
-
-## How Flagsmith is used
-
-| Mechanism | What the project does with it |
+| Overlap dashboard (after 2-way isolation) | Live storefront (`demo-us-mobile-001`, bucket `3`) |
 |---|---|
-| **Experiments** | Discovers experiments, seeds them, patches the rollout, and starts via `POST /api/v1/environments/{env_key}/experiments/{id}/start/`. |
-| **Audiences** | Reads and replaces each experiment's `{match, segment_ids}` audience. Respects one segment per audience and disables the rollout before every audience change. |
-| **Segments** | Creates trait-rule segments for the bucket ranges. No percentage-split condition is ever placed in an audience segment. |
-| **Identities and traits** | Persists `country`, `platform`, and `flagsmith_experiment_bucket`; reads enrollment from `GET /api/v1/identities/?identifier=...`; nothing fabricated. |
-| **Edge/SDK enrollment** | The bucket is a plain trait, so SDK/Edge evaluation resolves the same segment without a server lookup. The demo reads identity metadata after `evaluate --persist`; it does not call a hosted Edge API. |
-| **CLI** | `flagsmith evaluate ... --persist --json` for enrollment; `flagsmith api <path>` for admin calls so the key never enters `argv`. |
-| **API** | Raw REST for experiment create/rollout/start and segment create, because those payloads are not fully covered by CLI verbs. |
-| **Self-hosted** | The lab runs self-hosted Flagsmith (verified 2.291.0) with Postgres and experimentation on `:8010`, storefront `:8020`, dashboard `:8022`. |
+| ![Overlap dashboard showing before 100% collision and after 0% isolated](docs/assets/dashboard-after.png) | ![Storefront rendering Pricing banner urgent variant for US mobile](docs/assets/storefront.png) |
 
-Flagsmith is load-bearing: delete it and there is no enrollment, audience, or state to verify.
+## The Problem & Isolation Layer
 
-## Architecture and data flow
+Running two or more experiments against overlapping audiences contaminates every readout: a user enrolled in both a pricing banner test and an onboarding tip test sees two simultaneous treatments, distorting conversion attribution across both experiments.
 
-```text
-Agent (Claude Code / Codex)
-  reads skills/experiment-isolation/SKILL.md, calls its scripts/ wrappers
-        |
-        v
-engine/ (Python 3.9 stdlib: urllib, json, subprocess, hashlib, argparse)
-        |  flagsmith evaluate --persist     |  flagsmith api <path>
-        v                                  v
-Self-hosted Flagsmith API  <---- experiments, segments, identities, rollout
-        |
-        +--> audit.json --> plan.json --(approval token)--> apply.json
-                                   |                            |
-                                   +--> verify.json --> receipt.json
-                                                          |
-             lab/dashboard (overlap matrix) <--------------+
-```
+Flagsmith enforces hard structural constraints around experiment audiences:
 
-Summary to stderr, JSON to stdout or `--out`. Exit codes: `0` clear/success, `10` collision/infeasible/refusal/approval, `20` error. Audit writes JSON on `10`; `apply` and `rollback` mutate.
+- **Single-segment limit (`MAX_AUDIENCE_SEGMENTS = 1`):** Each experiment audience references at most one segment ID.
+- **No percentage splits in audiences:** Flagsmith rejects audience segments containing `PERCENTAGE_SPLIT` rules.
+- **Immutable started audiences:** Audiences cannot be edited while `experiment_rollout.enabled` is `true`, and once an experiment reaches `running` or `paused`, its audience is locked—pausing does not unlock audience edits.
 
-## 3-minute demo path
+**How pre-launch isolation preserves targeting rules:**
 
-Beat sheet: [docs/demo-script.md](docs/demo-script.md); ~15 seconds on the problem, most on the product.
+1. **Audit (`audit`):** Samples a deterministic synthetic cohort (`country`, `platform`, `flagsmith_experiment_bucket` in `0..99` via `sha256(identifier)[0:8] % 100`), persists traits via `flagsmith evaluate --persist --json`, reads Flagsmith's live enrollment (`metadata.experiment.in_experiment == true`) for active experiments, projects draft (`created`) eligibility from segment rules, and builds the pairwise N-way Jaccard and multi-exposure matrix. Exits `10` when collisions meet `--threshold` (default `0.05`).
+2. **Compose (`plan`):** Partitions colliding draft components into disjoint, equal-width contiguous ranges across `0..99` (up to `--max-concurrent 4` and at least `--min-bucket-width 5`). Because each audience holds one segment, the planner extracts each draft's non-bucket targeting rules (such as `us_mobile`: `country = US AND platform = mobile`) and composes them with the bucket range into `exp_iso_<slug>_<lo>_<hi>` (for example, `exp_iso_us_mobile_0_49` and `exp_iso_us_mobile_50_99`). If a draft collides with an immutable `running` or `paused` experiment (or exceeds concurrency/width limits), `plan` sets `feasible: false` and exits `10` rather than planning partial isolation.
+3. **Apply & Verify (`apply`, `verify`, `receipt`):** Validates the plan's HMAC approval token, creates or reuses composed segments, executes `disable rollout -> patch audience -> read-back verify -> start` for each draft, re-evaluates the paired 500-identity cohort against live Flagsmith Edge flags by default (or a fresh uncached prefix via `--sample-prefix`) to prove `after_jaccard == 0.0` (`pass: true`), and emits a compact JSON receipt.
 
-1. **0:00–0:15 — Problem.** Current main-instance drafts, one audience; lab IDs differ.
-2. **0:15–0:30.** Skill + engine + lab; audit, refuse, isolate, verify, receipt.
-3. **0:30–1:05 — Audit and matrix.** Run `audit`; show `exit=10` (collision is the gate signal), then the red N-way matrix.
-4. **1:05–1:25 — Plan and refusal.** Show the bucket segments and approval token; run `apply` with a wrong token, show `exit=10`, no changes.
-5. **1:25–1:50 — Approve and apply.** Run `apply` with the HMAC token; show segments created/reused, then disable → patch → start.
-6. **1:50–2:10 — Verify.** Resample; show `after_jaccard: 0`, `pass: true`, zero overlaps.
-7. **2:10–2:25 — Receipt.** Show before/after, changes, `rollback --apply`, and the 121-token receipt.
-8. **2:25–2:45 — Flagsmith side and close.** Both experiments live with disjoint audiences; bucket trait visible on an identity; repo links.
+## Quickstart
 
-## Setup and run
+**Prerequisites:** Python 3.9+ (stdlib only, no runtime packages), the [Flagsmith CLI](https://docs.flagsmith.com/integrating-with-flagsmith/CLI) on `PATH` (or `FLAGSMITH_BIN`), and Docker with Compose v2 if running the self-hosted lab.
 
-### Prerequisites
+### Path 1: Agent Skill (standalone)
 
-- Python 3.9+ (engine has no third-party dependencies).
-- Docker with Compose v2 for the lab.
-- The Flagsmith CLI on `PATH` (see the [Flagsmith CLI docs](https://docs.flagsmith.com/integrating-with-flagsmith/CLI)).
-- `jq` for the demo output.
-
-### Engine
+Copy `skills/experiment-isolation/` into your agent skills directory. The engine package is bundled under `skills/experiment-isolation/scripts/engine/`, so `scripts/run.sh` runs standalone from any project directory and writes relative `--out` artifacts to your current working directory (`$PWD`):
 
 ```sh
-git clone https://github.com/pranavk429/experiment-isolation
-cd experiment-isolation
-python3 -m engine.cli --help
-```
-
-Against any self-hosted Flagsmith instance, export the URL, a server-side key, and the environment key. The key never enters the repo or `argv`:
-
-```sh
-export FLAGSMITH_API_URL="http://localhost:8010"
-export FLAGSMITH_API_KEY="<server-side key>"
-export DEV_ENV_KEY="<environment key>"
-```
-
-Reset the demo drafts, then run:
-
-```sh
-python3 seed/demo_seed.py --experiments 2   # reset demo state
-
-python3 -m engine.cli audit   --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
-python3 -m engine.cli plan    --audit audit.json --max-concurrent 4 --min-bucket-width 5 --out plan.json
-python3 -m engine.cli apply   --plan plan.json --approve "<token from plan.json>" --out apply.json
-python3 -m engine.cli verify  --plan plan.json --samples 500 --workers 2 --out verify.json
-python3 -m engine.cli receipt --audit audit.json --plan plan.json --verify verify.json --apply apply.json --out receipt.json
-python3 -m engine.cli rollback --apply apply.json   # undo, if needed
-```
-
-Lab is portable; build used `~/flagsmith-local`.
-
-### Skill install
-
-Agent Skills layout (`SKILL.md`, `references/`, `scripts/`):
-
-```sh
-# Claude Code
+# Claude Code (or use ~/.codex/skills for Codex)
 mkdir -p ~/.claude/skills
 cp -R skills/experiment-isolation ~/.claude/skills/
 
-# Codex
-mkdir -p ~/.codex/skills
-cp -R skills/experiment-isolation ~/.codex/skills/
+export FLAGSMITH_API_URL="http://localhost:8010"
+export FLAGSMITH_API_KEY="<admin-api-key>"
+export DEV_ENV_KEY="<environment-key>"
+export FLAGSMITH_ENVIRONMENT="$DEV_ENV_KEY"
+export FLAGSMITH_PROJECT="1"
+
+bash ~/.claude/skills/experiment-isolation/scripts/check_env.sh
+bash ~/.claude/skills/experiment-isolation/scripts/run.sh audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
 ```
 
-Then ask: "Run another experiment on US mobile — check it does not overlap the pricing test first." The skill is packaged for contribution to the official Flagsmith skills repo; it is not merged upstream.
-
-### Lab (one command)
+Alternatively, run directly from the repository root (`python3 -m engine.cli ...` works via the root `engine/__init__.py` shim pointing to the canonical `skills/experiment-isolation/scripts/engine/`), use `skills/experiment-isolation/scripts/run.sh` standalone from any directory, or install the CLI entry point locally:
 
 ```sh
-bash lab/run.sh
+python3 -m engine.cli --help
+
+# Or install the CLI entry point:
+pip install -e .
+experiment-isolation --help
 ```
 
-Starts Flagsmith `:8010`, storefront `:8020`, dashboard `:8022`. Gate: `reset → demo → reset` = 100% → 0% → 100%, HTTP 200, no 409.
+### Path 2: Self-hosted Track 3 Lab
 
-## Results and evidence
-
-Values from `FINAL.md` (2-way) and `REPORT2.md` (3-way stress); harness total is TODO.
-
-| Evidence | Value | Source |
-|---|---|---|
-| Sample size requested / measured | `500` / `500` | `audit.json.sample_size` |
-| Before: max N-way Jaccard (all pairs) | `1.0` | `audit.json.overlaps[].jaccard` |
-| After: max N-way Jaccard (all pairs) | `0.0` | `verify.json.after_jaccard` |
-| After: `verify.pass` | `true` | `verify.json.pass` |
-| Receipt JSON size | `121` (2-way demo); `125` (3-way stress only) | [docs/token-count.md](docs/token-count.md) |
-| Demo-run total tokens | `TODO` | [docs/token-count.md](docs/token-count.md) |
-| Segments created / reused, 2-way verified | `0 / 2` | verification/FINAL.md |
-| Segments created / reused, 3-way stress | `3 / 0` | verification/REPORT2.md |
-| Tests passing | `93` passed (55+38) | `pytest` output |
-
-**Verified results:** before Jaccard 1.0, `after_jaccard == 0.0`, `verify.pass == true`. Receipt is 121 tokens for the 2-way demo (120 `cl100k_base`; 429 chars; internal 107); 125/124 is 3-way stress only.
-
-## Safety and limitations
-
-**Safety**
-
-- Audit/plan are read-only; `apply`/`rollback` mutate; `apply` needs the token.
-- Audit exits `10` on collision; apply exits `10` on missing/wrong token, overlap, or a non-draft experiment.
-- Undo with `python3 -m engine.cli rollback --apply apply.json`: created-only restores in place; a started experiment is recreated as a draft with its old audience. Failures sanitize keys/URLs and write an artifact. Do not use `flagsmith api` recipes.
-- Self-hosted only; no Cloud keys. Secrets never enter `argv`, logs, or the repo; admin calls use `flagsmith api`.
-- Audience changes follow: disable rollout → patch audience → start (start re-enables).
-
-**Limitations**
-
-- Overlap is sampled, not exhaustive; the verdict depends on sample size and traits. 500 is a default, not a guarantee.
-- The bucket is a deterministic hash split, approximately uniform but not stratified by country or platform. A 50/50 allocation is not exact in small samples.
-- A running experiment cannot change its audience, and pausing does not unlock it. The tool refuses; complete/delete and recreate the experiment.
-- An audience holds one segment, so isolation uses the bucket trait; compose other targeting inside the segment.
-- It measures isolation, not results; it does not replace Flagsmith's Bayesian analysis or pick a winner.
-- Lab traffic is simulated; synthetic identities persist. Use a disposable environment; see `lab/README.md`.
-- Packaged for upstream contribution, not merged.
-
-## Tests
+`make lab` (or `bash lab/run.sh`) boots an isolated Compose stack (`Flagsmith 2.291.0` on `:8010`, task processor on `:8011`, Postgres 15.5), bootstraps credentials into `lab/.env`, seeds two colliding `us_mobile` drafts (`pricing_banner` and `onboarding_tip`), runs an initial audit, and serves the storefront (`:8020`) and overlap matrix dashboard (`:8022`):
 
 ```sh
-python3 -m pytest tests/engine tests/skill -q
+make lab        # or: bash lab/run.sh
+make lab-demo   # boots lab + runs audit -> plan -> apply -> verify -> receipt
+make lab-reset  # wipes and rebuilds the clean collision baseline
 ```
 
-Expected: `93` passed (55+38). Engine tests cover sampling, Jaccard, refusal, apply, verify, receipt, rollback; skill tests cover frontmatter, triggers, CLI.
+To seed colliding drafts against any configured local Flagsmith instance directly:
 
-## Repository map
+```sh
+python3 seed/demo_seed.py --experiments 2
+```
+
+Run the test, lint, and skill validation suites (`116` pytest tests, including `42` skill contract tests):
+
+```sh
+make test       # pytest suite (116 tests across engine, lab, and skill)
+make lint       # ruff check across engine, scripts, lab, seed, tests
+make validate   # unittest skill packaging & contract checks (42 tests)
+```
+
+## How Flagsmith is Used & Safety Model
+
+| Component | Usage |
+|---|---|
+| **Experiments** | Discovers non-completed experiments (`created`, `paused`, `running`), seeds colliding drafts, patches rollouts, and starts drafts via `POST /api/v1/environments/{env_key}/experiments/{id}/start/`. |
+| **Audiences** | Reads and updates `{match, segment_ids}` within the `MAX_AUDIENCE_SEGMENTS = 1` constraint, always disabling the rollout before patching and refusing started experiments. |
+| **Composed Segments** | Extracts existing non-bucket rules and composes them with `flagsmith_experiment_bucket` range rules (`GREATER_THAN_INCLUSIVE` / `LESS_THAN`) into `exp_iso_<slug>_<lo>_<hi>`. |
+| **CLI `evaluate --persist`** | Persists synthetic identity traits (`country`, `platform`, `flagsmith_experiment_bucket`) and evaluates flags via `flagsmith evaluate --persist --json`, keeping credentials out of command `argv`. |
+| **Header-auth REST APIs** | Uses Python stdlib HTTP (`AdminAPI` with `Authorization: Api-Key`, `EdgeAPI` with `X-Environment-Key`) for strict HTTP status checks, pagination, secret sanitization, and read-back verification. |
+| **Self-hosted Docker Compose** | `lab/docker-compose.yml` runs Flagsmith `2.291.0` with experimentation and Postgres analytics enabled alongside a live storefront (`:8020`) and static overlap dashboard (`:8022`). |
+
+### Safety Guarantees
+
+- **Local-only guard:** `Config.load()` rejects non-localhost `FLAGSMITH_API_URL` targets unless `ISO_ALLOW_REMOTE=1` is explicitly set. `audit` and `plan` never mutate experiments or segments.
+- **HMAC plan binding:** `plan` computes an 8-hex confirmation token (`iso-<8 hex>`) via HMAC-SHA256 (keyed by the admin key) over the environment, project, threshold, planned segments, audience changes, and restore snapshot. `apply` validates with `hmac.compare_digest` and refuses tampered plans, mismatched environments, or non-draft targets with zero writes.
+- **Exit codes:** `0` success / clear; `10` gate refusal (collision detected in `audit`, infeasible plan—including capacity breaches or a draft colliding with an immutable `running` or `paused` experiment—invalid token, non-draft target, or failed `verify`); `20` config, CLI, or HTTP error (keys and tokens redacted from messages and `apply-failure.json`).
+- **Honest `requires_recreate` rollback:** `experiment-isolation rollback --apply apply.json --out rollback.json` restores still-draft experiments in place (`live_restore: true`). For experiments already started (`running` or `paused`), Flagsmith rejects audience mutations, so rollback pauses/deletes the started experiment and recreates a `[rollback]` draft with the prior audience—accurately reporting `requires_recreate: true` and `live_restore: false` rather than claiming an in-place revert. Created segments are deleted only when all experiment rollbacks succeed.
+- **Compact receipt & skill budget:** Receipts target `<= 125` tokens (measured `121` `o200k_base` / `120` `cl100k_base` for 2-way; `123` / `122` for 3-way); `SKILL.md` body is `1,210` `o200k_base` tokens (`1,304` full file). See [docs/token-count.md](docs/token-count.md).
+
+## Limitations
+
+- **Synthetic sampling:** `audit` and `verify` evaluate a deterministic 50/30/20 (`US mobile`, `GB mobile`, `US desktop`) cohort (default `--samples 500`, max `5000`); overlap verdicts depend on sample size and synthetic identities persist in the environment unless `--cleanup` is passed. By default, `verify` re-evaluates the paired 500-identity cohort against live Flagsmith Edge flags (and accepts `--sample-prefix` to evaluate a fresh uncached prefix).
+- **Projected vs. measured drafts:** Flagsmith emits `metadata.experiment.in_experiment` only once an experiment is running, so `audit` marks draft eligibility as `projected` from segment rules while `verify` measures live Flagsmith enrollment after `apply` starts them.
+- **Pre-launch only:** Running or paused experiments are refused; isolating an already-running collision requires completing or deleting and recreating the experiment.
+- **Bucket uniformity & scope:** `flagsmith_experiment_bucket` (`sha256(identifier)[0:8] % 100`) is uniform across identifiers rather than stratified by subgroup, and the tool verifies audience isolation rather than statistical lift or winner selection.
+
+## Repository Layout
 
 | Path | Contents |
 |---|---|
-| `engine/` | Python 3.9 stdlib CLI: `audit`, `plan`, `apply`, `verify`, `receipt`, `rollback`. |
-| `skills/experiment-isolation/` | `SKILL.md`, `references/`, `scripts/` wrappers for coding agents. |
-| `lab/` | `bash lab/run.sh`: Flagsmith `:8010`, storefront `:8020`, dashboard `:8022`. |
-| `seed/` | `demo_seed.py`: two colliding experiments for the demo. |
-| `tests/` | Engine and skill contract tests. |
-| `docs/` | Demo script, form answers, judging map, token-count method. |
-| `demo/` | Runnable demo assets. |
-| `verification/` | Recorded evidence and bug reports. |
-| `CONTRACT.md` | Build contract, schemas, and acceptance tests. |
+| `skills/experiment-isolation/` | Agent Skill (`SKILL.md`, `references/`), portable wrapper scripts (`run.sh`, `check_env.sh`, `token_count.py`), and bundled stdlib `scripts/engine/` package. |
+| `engine/` | Root `engine/__init__.py` shim pointing `python3 -m engine.cli` from the repo root to `skills/experiment-isolation/scripts/engine/`. |
+| `lab/` | Self-hosted Track 3 lab (`docker-compose.yml`, `bootstrap.py`, `seed/`, `storefront/`, `dashboard/`, `run.sh`, [lab/README.md](lab/README.md)). |
+| `seed/` | `demo_seed.py` wrapper delegating to `engine.seed` for draft collision seeding. |
+| `tests/` | Offline pytest engine/regression suite (`tests/engine/`), lab storefront/seed suite (`tests/lab/`), and unittest skill contract suite (`tests/skill/`). |
+| `docs/` | [docs/token-count.md](docs/token-count.md) and verified UI screenshots (`docs/assets/`). |
+| `pyproject.toml` | Zero-dependency package metadata (`experiment-isolation` entry point), pytest, and ruff config. |
+| `Makefile` | Targets for `test`, `lint`, `validate`, `lab`, `lab-demo`, and `lab-reset`. |
 
-## License and acknowledgments
+## License & Acknowledgments
 
-MIT License — see [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE).
 
-Built for ToggleWars 2026. Thanks to Flagsmith for the platform, API, CLI, and self-hosting docs; WeMakeDevs for the event; and the Agent Skills specification. Demo data is synthetic; lab traffic is simulated.
+Built for ToggleWars 2026 using self-hosted [Flagsmith](https://github.com/Flagsmith/flagsmith), the Flagsmith CLI, and the [Agent Skills](https://agentskills.io/) specification. Lab traffic and sampled identities are synthetic.

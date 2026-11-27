@@ -33,13 +33,13 @@ def main(argv: list) -> int:
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:
-        print("error: cannot read %s: %s" % (path, exc), file=sys.stderr)
+        print(f"error: cannot read {path}: {exc}", file=sys.stderr)
         return 2
 
     try:
         json.loads(text)
     except ValueError as exc:
-        print("error: %s is not valid JSON: %s" % (path, exc), file=sys.stderr)
+        print(f"error: {path} is not valid JSON: {exc}", file=sys.stderr)
         return 2
 
     print(count_tokens(text))

@@ -3,13 +3,18 @@
 *.key
 *.pem
 
-# Dependencies and Python caches
+# Dependencies, build artifacts, and caches
 node_modules/
 venv/
 .venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
 *.pyc
+.DS_Store
 
 # Generated engine evidence
 audit.json
@@ -17,6 +22,7 @@ plan.json
 apply.json
 verify.json
 receipt.json
+rollback.json
 restore-*.json
 apply-failure.json
 
@@ -25,7 +31,7 @@ lab/.env
 lab/audit.json
 lab/dashboard/audit.json
 
-# Rendered video output (final cuts stay local until chosen)
-video/renders/*.mp4
-video/renders/*.mkv
-video/renders/*.webm
+# Internal submission drafts and local video production files
+SUBMISSION.md
+docs/submission*.md
+video/

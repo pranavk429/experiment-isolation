@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install test and lint tools
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pytest ruff
+
+      - name: Run Ruff lint
+        run: ruff check engine skills/experiment-isolation/scripts lab seed tests
+
+      - name: Run pytest suite
+        run: python3 -m pytest -q
+
+      - name: Run skill contract unittest suite
+        run: PYTHONPATH=skills/experiment-isolation/scripts python3 -m unittest discover -s tests/skill -v
+
+      - name: Validate SKILL.md frontmatter and standalone wrapper
+        run: |
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("skills/experiment-isolation/SKILL.md").read_text(encoding="utf-8")
+          assert text.startswith("---\n"), "SKILL.md must start with YAML frontmatter"
+          end = text.find("\n---\n", 4)
+          assert end != -1, "SKILL.md frontmatter is not closed"
+          fm = {}
+          for line in text[4:end].splitlines():
+              if not line.strip() or line.lstrip().startswith("#"):
+                  continue
+              key, value = line.split(":", 1)
+              fm[key.strip()] = value.strip().strip("'\"")
+          assert fm.get("name") == "experiment-isolation"
+          assert re.match(r"^[a-z0-9]+(?:-[a-z0-9]+)*$", fm["name"])
+          assert 100 < len(fm.get("description", "")) <= 1024
+          assert "compatibility" not in fm
+          assert "https://github.com/pranavk429/experiment-isolation" in fm.get("metadata", "")
+          print("SKILL.md frontmatter valid")
+          PY
+          bash -n skills/experiment-isolation/scripts/run.sh
+          bash -n skills/experiment-isolation/scripts/check_env.sh
+          tmp_skill="$(mktemp -d)"
+          trap 'rm -rf "$tmp_skill"' EXIT
+          cp -R skills/experiment-isolation "$tmp_skill/experiment-isolation"
+          (cd /tmp && bash "$tmp_skill/experiment-isolation/scripts/run.sh" --help >/dev/null)

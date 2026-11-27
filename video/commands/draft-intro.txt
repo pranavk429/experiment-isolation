@@ -1,3 +1,0 @@
-ls -l skill/SKILL.md
-python3 -m engine.cli --help | head -14
-sed -n '/^## Architecture/,/^## 3-minute/p' README.md | head -16

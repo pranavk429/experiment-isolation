@@ -5,12 +5,14 @@ overlapping A/B audiences visible before they contaminate a readout.
 
 Two draft experiments deliberately target the same `us_mobile` segment. The lab
 measures the overlap, shows a collision matrix, then the isolation workflow
-splits the audience with the stable integer trait
-`flagsmith_experiment_bucket` (0–49 / 50–99). The dashboard shows the measured
+composes the `us_mobile` rules with disjoint `flagsmith_experiment_bucket` ranges
+(`exp_iso_us_mobile_*`: 0–49 / 50–99), preserving `us_mobile` targeting and
+keeping non-US-mobile visitors excluded. The dashboard shows the measured
 before/after.
 
 This is the Track 3 artefact for **Experiment Isolation**. The same repository
-contains the Flagsmith Agent Skill in `skill/` and the CLI engine in `engine/`.
+contains the Flagsmith Agent Skill in `skills/experiment-isolation/` and the CLI
+engine in `skills/experiment-isolation/scripts/engine/`.
 
 ---
 
@@ -24,7 +26,6 @@ contains the Flagsmith Agent Skill in `skill/` and the CLI engine in `engine/`.
 | `lab/storefront/` | Stdlib Python storefront on 8020; evaluates flags through the SDK/edge API with `flagsmith_experiment_bucket` |
 | `lab/dashboard/` | Static single-page overlap matrix on 8022; no build step |
 | `lab/run.sh` | One command for Compose, bootstrap, seed, audit, servers, URLs |
-| `demo/README.md` | Three-minute demo path |
 
 The existing Flagsmith instance on **8000/8001 is never touched**. The lab uses
 its own Compose project, network, volume, and ports.
@@ -38,9 +39,7 @@ its own Compose project, network, volume, and ports.
 - Free ports **8010**, **8011**, **8020**, **8022**.
 - `curl` (used by the runner's health checks).
 
-Verified against Flagsmith **2.291.0**. The Compose file pulls
-`docker.flagsmith.com/flagsmith/flagsmith:latest` like the official starter; the
-lab was tested with the image reporting 2.291.0.
+Pinned to Flagsmith **2.291.0** (`docker.flagsmith.com/flagsmith/flagsmith:2.291.0`).
 
 ---
 
@@ -115,7 +114,7 @@ To start them early and make live enrollment measurable:
 python3 lab/seed/seed.py --start
 ```
 
-Running experiments cannot be retargeted without pausing or recreating them.
+Running or paused experiments cannot be retargeted—pausing does not unlock audience edits, so retargeting requires recreating them.
 
 ---
 
@@ -160,7 +159,10 @@ receipt` against the lab, then leaves the server-rendered dashboard showing:
 - Before → after: **100% → 0%**, 100 points removed
 - Evidence: `receipt.json` loaded, pass true, changes 4, rollback steps
 
-Prefer the individual commands? Use the exact engine contract:
+Prefer the individual commands? From the repository root, `python3 -m engine.cli ...`
+works directly (via the root `engine/__init__.py` shim pointing to the canonical
+`skills/experiment-isolation/scripts/engine/`), while
+`bash skills/experiment-isolation/scripts/run.sh` runs standalone from any directory:
 
 ```bash
 source lab/.env
@@ -178,20 +180,23 @@ python3 -m engine.cli apply \
   --out lab/dashboard/apply.json
 
 python3 -m engine.cli verify \
-  --plan lab/dashboard/plan.json --samples 500 \
+  --plan lab/dashboard/plan.json --samples 500 --workers 2 \
   --out lab/dashboard/verify.json
 
 python3 -m engine.cli receipt \
   --audit lab/dashboard/audit.json --plan lab/dashboard/plan.json \
-  --verify lab/dashboard/verify.json --out lab/dashboard/receipt.json
+  --apply lab/dashboard/apply.json --verify lab/dashboard/verify.json \
+  --out lab/dashboard/receipt.json
 ```
 
 Refresh http://localhost:8022 after the loop. The dashboard reads
 `receipt.json` and `verify.json` from its own directory; no build step.
 
 > The demo is explicitly local and destructive to the **lab** state only. It
-> creates the bucket segments, disables/changes/re-enables the draft audiences,
-> starts the experiments, and writes rollback commands into `apply.json`.
+> creates the `exp_iso_us_mobile_*` bucket segments (preserving `us_mobile`
+> targeting so non-US-mobile visitors stay excluded), disables/changes/re-enables
+> the draft audiences, starts the experiments, and writes rollback commands into
+> `apply.json`.
 
 To return to the initial collision for a repeat demo, use the one-command
 reset (it wipes the volume and rebuilds the clean baseline):
@@ -277,12 +282,12 @@ The intended reuse is a starter, not a one-off demo:
    `/auth/users/` → `/organisations/` → `/projects/` → `/environments/` →
    `/warehouse-connections/` → `/master-api-keys/`.
 
-`lab/seed/seed.py` is self-contained and idempotent. At build time
-`seed/demo_seed.py` delegates to `engine.seed`, which hardcodes metric 1,
-segment 4, and the research feature names; it therefore targets the existing
-research instance rather than a fresh lab. The lab keeps its own seed and does
-not require the engine seed. The engine's audit remains the producer of the
-measured/projected file.
+`lab/seed/seed.py` is idempotent and reuses the shared `engine.seed` helpers
+(`ensure_feature_with_variant`, `ensure_us_mobile_segment`,
+`ensure_purchase_metric`) to resolve features, the `us_mobile` segment, and the
+`Purchase` metric dynamically by name. `seed/demo_seed.py` exposes `engine.seed`
+for standalone seeding against any Flagsmith environment. The engine's audit
+remains the producer of the measured/projected file.
 
 Configuration knobs:
 

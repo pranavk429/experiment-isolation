@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Verify local Flagsmith prerequisites without printing secret values.
 # Usage:
-#   source ~/flagsmith-local/flagsmith.env && bash check_env.sh
-#   FLAGSMITH_ENV_FILE=lab/.env bash check_env.sh
+#   source lab/.env && bash scripts/check_env.sh
+#   FLAGSMITH_ENV_FILE=lab/.env bash scripts/check_env.sh
 set -u
 
 failed=0
@@ -57,14 +57,14 @@ else
 fi
 
 missing=0
-for name in FLAGSMITH_API_URL FLAGSMITH_PROJECT DEV_ENV_KEY; do
+for name in FLAGSMITH_API_URL FLAGSMITH_PROJECT; do
   if [[ -z "${!name:-}" ]]; then
     printf 'FAIL: %s is not set\n' "$name" >&2
     missing=1
   fi
 done
-if [[ -z "${FLAGSMITH_ENVIRONMENT:-${FLAGSMITH_ENVIRONMENT_KEY:-}}" ]]; then
-  printf 'FAIL: FLAGSMITH_ENVIRONMENT is not set (FLAGSMITH_ENVIRONMENT_KEY accepted)\n' >&2
+if [[ -z "${DEV_ENV_KEY:-${FLAGSMITH_ENVIRONMENT_KEY:-${FLAGSMITH_ENVIRONMENT:-}}}" ]]; then
+  printf 'FAIL: set DEV_ENV_KEY, FLAGSMITH_ENVIRONMENT_KEY, or FLAGSMITH_ENVIRONMENT\n' >&2
   missing=1
 fi
 if [[ "$missing" -ne 0 ]]; then
@@ -74,13 +74,14 @@ fi
 expected_key=""
 if [[ -n "${FLAGSMITH_API_URL:-}" ]] && command -v python3 >/dev/null 2>&1; then
   expected_key="$(python3 - "$FLAGSMITH_API_URL" <<'PY'
+import re
 import sys
 import urllib.parse
 
 parsed = urllib.parse.urlparse(sys.argv[1])
-host = (parsed.hostname or "").replace(".", "_")
+host = re.sub(r"[^A-Za-z0-9]", "_", parsed.hostname or "")
 port = parsed.port or (443 if parsed.scheme == "https" else 80)
-print("FLAGSMITH_API_KEY_%s_%s" % (host, port))
+print(f"FLAGSMITH_API_KEY_{host}_{port}")
 PY
 )" || expected_key=""
 fi

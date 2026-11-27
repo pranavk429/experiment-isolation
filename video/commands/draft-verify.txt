@@ -1,1 +1,0 @@
-jq '{before_jaccard, after_jaccard, pass, pairs_measured: (.overlaps | length), overlapping_pairs: ([.overlaps[] | select(.jaccard > 0)] | length)}' video/work/draft/verify.json

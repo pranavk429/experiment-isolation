@@ -1,1 +1,0 @@
-jq '{pass, changes: [.changes[] | {experiment_id, to_segment_ids, verified}], steps: [.steps[] | {experiment_id, step, verified}]}' video/work/final/apply.json

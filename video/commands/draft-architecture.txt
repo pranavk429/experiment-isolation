@@ -1,1 +1,0 @@
-sed -n '/^## Architecture/,/^## 3-minute/p' README.md | head -18

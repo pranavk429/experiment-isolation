@@ -3,7 +3,7 @@
 # This is a separate Compose project ("isolation-lab") on ports 8010/8011 so it
 # never touches an existing Flagsmith instance on 8000/8001.
 #
-# Verified against Flagsmith 2.291.0 (the current :latest image at build time).
+# Pinned to Flagsmith 2.291.0.
 # Local playground only: every secret below is a default. Change it before
 # exposing this anywhere outside localhost.
 #
@@ -44,7 +44,7 @@ services:
       start_period: 20s
 
   migrate-db:
-    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    image: docker.flagsmith.com/flagsmith/flagsmith:2.291.0
     command:
       - migrate
     environment:
@@ -56,7 +56,7 @@ services:
         condition: service_healthy
 
   flagsmith:
-    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    image: docker.flagsmith.com/flagsmith/flagsmith:2.291.0
     restart: unless-stopped
     command:
       - serve
@@ -71,7 +71,7 @@ services:
   # Required because TASK_RUN_METHOD=TASK_PROCESSOR. Published on 8011 so the
   # lab never collides with the default 8000/8001 pair.
   flagsmith-task-processor:
-    image: docker.flagsmith.com/flagsmith/flagsmith:latest
+    image: docker.flagsmith.com/flagsmith/flagsmith:2.291.0
     restart: unless-stopped
     command:
       - run-task-processor

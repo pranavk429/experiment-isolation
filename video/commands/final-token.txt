@@ -1,1 +1,0 @@
-printf 'receipt tokens: '; python3 skills/experiment-isolation/scripts/token_count.py video/work/final/receipt.json

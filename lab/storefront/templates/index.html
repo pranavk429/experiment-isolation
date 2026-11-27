@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${section_title} · Experiment Isolation Lab</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23070b10'/><path d='M25 70 50 24l25 46' stroke='%23c9ff4d' stroke-width='9' fill='none'/></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <div class="brand"><span class="mark">I</span> Isolation Lab</div>
+    <nav class="nav-links">${nav_html}<a href="${api_href}">API JSON</a></nav>
+  </div>
+</header>
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <div class="kicker">Flagsmith · local storefront</div>
+      <h1>Two experiments.<br><span>One audience.</span></h1>
+      <p class="lede">This storefront evaluates two live flags for a synthetic visitor. Both experiment drafts target <code>us_mobile</code>, so they compete for the same people. The stable <code>flagsmith_experiment_bucket</code> trait is what makes a disjoint fix possible.</p>
+    </div>
+    <form class="identity" method="get" action="/">
+      <h2>Evaluate an identity</h2>
+      <p>Traits are persisted in your local Flagsmith instance.</p>
+      <div class="field">
+        <label for="identifier">Identifier</label>
+        <input id="identifier" name="identifier" value="${identifier}" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="row">
+        <div class="field">
+          <label for="country">Country</label>
+          <select id="country" name="country">
+            <option value="US" ${us_selected}>US</option>
+            <option value="GB" ${gb_selected}>GB</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="platform">Platform</label>
+          <select id="platform" name="platform">
+            <option value="mobile" ${mobile_selected}>mobile</option>
+            <option value="desktop" ${desktop_selected}>desktop</option>
+          </select>
+        </div>
+      </div>
+      <button type="submit">Evaluate flags →</button>
+      ${identity_meta}
+      ${trace}
+    </form>
+  </section>
+  ${notice}
+  <div class="section-head">
+    <h2>${section_title}</h2>
+    <p>SDK/edge evaluation · synthetic traffic</p>
+  </div>
+  <section class="grid">${cards}</section>
+  <section class="trace-panel">
+    <h3>Request trace</h3>
+    ${trace_panel_body}
+  </section>
+</main>
+<footer>
+  <div class="wrap">
+    <span>Local only · synthetic identities · no production data</span>
+    <span>Flagsmith ${api_url} · <a href="/api/health">health</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -172,13 +172,15 @@ assert isinstance(data.get("overlaps"), list), "overlaps must be a list"
 }
 
 generate_audit() {
-  if (cd "$ROOT_DIR" && "$PYTHON" -c 'import engine.cli' >/dev/null 2>&1); then
+  local engine_scripts="$ROOT_DIR/skills/experiment-isolation/scripts"
+  if (cd "$ROOT_DIR" && PYTHONPATH="$engine_scripts${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c 'import engine.cli' >/dev/null 2>&1); then
     info "Generating a measured audit with engine.cli (samples=$SAMPLES, threshold=$THRESHOLD)."
     rm -f "$LAB_DIR/dashboard/audit.json"
     local status=0
     set +e
     (
       cd "$ROOT_DIR"
+      export PYTHONPATH="$engine_scripts${PYTHONPATH:+:$PYTHONPATH}"
       FLAGSMITH_API_URL="$API_URL" \
       FLAGSMITH_API_KEY_localhost_8010="$LAB_ADMIN_API_KEY" \
       FLAGSMITH_API_KEY="$LAB_ADMIN_API_KEY" \
@@ -341,11 +343,13 @@ cmd_audit() {
 }
 
 cmd_demo() {
-  if ! (cd "$ROOT_DIR" && "$PYTHON" -c 'import engine.cli' >/dev/null 2>&1); then
+  local engine_scripts="$ROOT_DIR/skills/experiment-isolation/scripts"
+  if ! (cd "$ROOT_DIR" && PYTHONPATH="$engine_scripts${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON" -c 'import engine.cli' >/dev/null 2>&1); then
     fail "demo requires engine.cli. Run 'bash lab/run.sh' to start the lab with the sample fallback."
   fi
   cmd_up
   source_env
+  export PYTHONPATH="$ROOT_DIR/skills/experiment-isolation/scripts${PYTHONPATH:+:$PYTHONPATH}"
   info "Running the approval-gated isolation cycle (local lab only)."
   local plan="$LAB_DIR/dashboard/plan.json"
   local apply="$LAB_DIR/dashboard/apply.json"
@@ -367,11 +371,11 @@ cmd_demo() {
   ) || fail "engine.cli apply failed. The lab is unchanged; inspect plan.json."
   (
     cd "$ROOT_DIR"
-    "$PYTHON" -m engine.cli verify --plan "$plan" --samples "$SAMPLES" --out "$verify"
+    "$PYTHON" -m engine.cli verify --plan "$plan" --samples "$SAMPLES" --workers 2 --out "$verify"
   ) || fail "engine.cli verify failed. Inspect lab/dashboard/verify.json."
   (
     cd "$ROOT_DIR"
-    "$PYTHON" -m engine.cli receipt --audit "$LAB_DIR/dashboard/audit.json" --plan "$plan" --verify "$verify" --out "$receipt"
+    "$PYTHON" -m engine.cli receipt --audit "$LAB_DIR/dashboard/audit.json" --plan "$plan" --verify "$verify" --apply "$apply" --out "$receipt"
   ) || fail "engine.cli receipt failed."
 
   info "Full cycle complete. Refresh http://localhost:$DASHBOARD_PORT to see before/after."
@@ -421,9 +425,7 @@ elif verify:
     source = "verify.json (after)"
 if verdict == "clear":
     verdict = "isolated"
-print("Audit: %s experiments, verdict=%s, source=%s" % (
-    len(data.get("experiments") or []), verdict, source,
-))
+print(f"Audit: {len(data.get('experiments') or [])} experiments, verdict={verdict}, source={source}")
 '
   else
     echo "Audit: missing"
@@ -469,7 +471,7 @@ case "${1:-up}" in
   sample) cmd_sample ;;
   status) cmd_status ;;
   down|stop) cmd_down ;;
-  reset) cmd_reset ;;
+  reset) cmd_reset "$@" ;;
   -h|--help|help) usage ;;
   *) usage; exit 2 ;;
 esac

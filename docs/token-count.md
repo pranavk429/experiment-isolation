@@ -1,109 +1,42 @@
-# Token count — method and authoritative values
+# Token Counting Methodology
 
-Track 4 requires a token count for the demo run. The headline is the 2-way demo receipt: **121 tokens under `o200k_base` / 120 under `cl100k_base`**, 429 characters, internal engine estimate 107. Only the full harness total remains to be filled after the recorded session.
+`skills/experiment-isolation/scripts/token_count.py` provides deterministic token accounting for JSON artifacts produced by the isolation workflow.
 
-## Headline
+## How `token_count.py` Counts Tokens
 
-| Measure | Value |
-|---|---:|
-| 2-way demo receipt, `o200k_base` | **121** |
-| 2-way demo receipt, `cl100k_base` | **120** |
-| Receipt characters (no trailing newline) | **429** |
-| Receipt internal estimate (`token_count.receipt`) | **107** |
-| 3-way stress-test receipt | 125 / 124 — **not the demo headline** |
-
-The receipt includes its summary plus five integer artifact estimates (audit 802, plan 852, apply 697, verify 96, receipt 107). It does **not** include the full artifacts, the skill body, or harness context. The five estimates sum to 2,554 and are `ceil(chars/4)` values, not tiktoken counts.
-
-## What is counted
-
-| Item | Included? | Why |
-|---|---|---|
-| `skills/experiment-isolation/SKILL.md` body | Separate | Always-on skill context; measured below. |
-| `audit.json`, `plan.json`, `apply.json`, `verify.json`, `receipt.json` as read by the agent | Separate | Tool results the model sees. |
-| Command stdout/stderr summaries | Harness total only | The agent reads them to decide the next step. |
-| Tool-call arguments and model replies | Harness total only | Part of the harness total. |
-| System prompt and conversation history | Harness total only | Real cost, not attributable to the skill. |
-| Cache-read or cache-write tokens | Report separately | Hiding them overstates efficiency. |
-| Flagsmith server logs, Docker pulls, browser paint | No | Not model input. |
-| Files present in the repo but never opened | No | They did not enter context. |
-
-The receipt itself is the compact JSON file read by `token_count.py`; it does not embed the full upstream artifacts.
-
-## Measure the receipt
-
-The helper is at `skills/experiment-isolation/scripts/token_count.py`. It takes one JSON file and prints one integer, using `o200k_base` when tiktoken is installed and a documented chars/4 estimate otherwise:
+- **CLI helper (`token_count.py <file.json>`):** Validates JSON syntax and prints one integer. When `tiktoken` is installed, it encodes the exact file text using `o200k_base`; when `tiktoken` is absent, it falls back to `ceil(len(text) / 4)`.
+- **In-engine estimate (`util.estimate_tokens`):** Keeps the core `engine` package dependency-free by computing `ceil(len(compact_json(value)) / 4)` for each artifact inside `receipt.json`'s `token_count` block (`audit`, `plan`, `apply`, `verify`, `receipt`).
 
 ```sh
 python3 skills/experiment-isolation/scripts/token_count.py receipt.json
-# 121
 ```
 
-The 2-way demo receipt was produced with `--apply apply.json`. Dropping `--apply` reports `"apply":0`; it does not change the measured 121/120 at these sizes.
+## Measured Values
 
-## Standalone artifact sizes
+Verified with `tiktoken` (`o200k_base` and `cl100k_base`) against Flagsmith `2.291.0`:
 
-Authoritative 2-way measurement (500 samples, `--workers 2` verify):
+| Artifact / Scope | `o200k_base` | `cl100k_base` | Engine `ceil(chars/4)` | Notes |
+|---|---:|---:|---:|---|
+| `SKILL.md` body (after frontmatter) | `1,210` | `1,212` | `1,211` | `78` total lines (`4,841` body chars) |
+| `SKILL.md` full file | `1,304` | `1,306` | `1,339` | `5,353` full chars |
+| 2-way `receipt.json` (with `--apply`) | `121` | `120` | `106` | `426` bytes; workflow artifact estimates sum `1,563` |
+| 3-way `receipt.json` (with `--apply`) | `123` | `122` | `107` | `429` bytes; workflow artifact estimates sum `2,186` |
 
-| Artifact | Bytes | `o200k_base` | `cl100k_base` | Receipt estimate |
-|---|---:|---:|---:|---:|
-| `audit.json` | 3,209 | 1,106 | 1,103 | 802 |
-| `plan.json` | 3,409 | 821 | 796 | 852 |
-| `apply.json` | 2,787 | 645 | 631 | 697 |
-| `verify.json` | 385 | 139 | 137 | 96 |
-| `receipt.json` | 430 | **121** | **120** | 107 |
-| **Five artifacts** | — | **2,832** | **2,787** | 2,554 |
+## Three Distinct Token Scopes
 
-The skill body is **1,477 `o200k_base`** after the portability fix (full `SKILL.md` 1,550; both external validators pass). Adding it to the five standalone artifacts gives **4,309 `o200k_base`** / **4,260 `cl100k_base`**, excluding a rollback artifact (none was run in this measurement).
+1. **Skill context (`SKILL.md` body):** Only the Markdown body after the YAML frontmatter loads when the skill activates (`1,210` `o200k_base` tokens). Reference files (`references/api.md`, `safety.md`, `troubleshooting.md`) load on demand only when troubleshooting or checking API/safety details.
+2. **Compact receipt (`receipt.json`):** Targets `<= 125` tokens (`121` `o200k_base` / `120` `cl100k_base` measured for a 2-way isolated run with `--apply`). Contains compact verdict deltas (`before`/`after` Jaccard and multi-exposure rate), change count, rollback hint, and the five `ceil(chars/4)` artifact estimates—never raw API payloads.
+3. **Workflow artifacts vs. harness session total:**
+   - **Workflow artifacts:** Full `audit.json`, `plan.json`, `apply.json`, `verify.json`, and `receipt.json` files remain on disk; agents inspect only compact summary keys (`verdict`, `collisions`, `approval_token`, `pass`) and the final receipt.
+   - **Harness session total:** The complete `input + output` token usage exported from the agent harness for a recorded run (with cache-read tokens reported separately). Never substitute the `receipt.json` count for the harness session total.
 
-The tracked **2,944** subtotal is the pre-portability figure (1,267 body plus a rollback artifact); the current measured sum is **4,309**. If the skill body changes, re-measure and update both numbers.
+## What Is Included vs. Excluded
 
-## Harness total
-
-Export the session usage from the harness used for the recording and sum input + output. For OpenCode, export the session JSON and sum the per-message `tokens.input` and `tokens.output` fields.
-
-Recorded run identity:
-
-```text
-Harness: OpenCode general subagent
-Model: DeepSeek V4.1 Flash 1017 (provider opencode-go)
-Date: 2026-11-27
-Commit SHA: not recorded (no git metadata)
-Sample size: 500 (2-way); 100 (3-way stress)
-Harness total: TODO
-```
-
-If the harness reports cached input separately, record fresh input, cache read, and output. The headline is fresh input + output; cache read is reported in the notes.
-
-## Fill-in table
-
-| Component | Source | `o200k_base` | In harness total? | Notes |
-|---|---|---:|---|---|
-| `SKILL.md` body | measured | 1,477 | Separate | Full file 1,550. |
-| `audit.json` | measured | 1,106 | Separate | Full artifact. |
-| `plan.json` | measured | 821 | Separate | Full artifact. |
-| `apply.json` | measured | 645 | Separate | Full artifact. |
-| `verify.json` | measured | 139 | Separate | Full artifact. |
-| `receipt.json` | measured | 121 | Separate | Demo headline; 120 cl100k. |
-| Rollback artifact | — | — | — | Not run in this measurement. |
-| Command summaries | harness | — | Yes | Not separately measured. |
-| Tool-call arguments | harness | — | Yes | Not separately measured. |
-| Model replies | harness | — | Yes | Not separately measured. |
-| System prompt / context | harness | — | Headline only | Not attributable to the skill. |
-| Retries | harness | — | Headline only | Count every attempt used. |
-| **Skill + five artifacts** | sum | **4,309** | — | Excludes harness-only rows and rollback. |
-| **Harness total (headline)** | harness usage | **TODO** | — | Form number. |
-| Cache read | harness | — | No | Report separately. |
-
-## Reporting template
-
-```text
-Demo-run receipt: 121 o200k_base / 120 cl100k_base (429 chars; internal 107)
-3-way stress receipt: 125 / 124 (not the demo headline)
-Skill body + five artifacts: 4,309 o200k_base (skill body 1,477; full 1,550)
-Harness total: TODO (input + output)
-Harness/model/date: OpenCode general subagent / DeepSeek V4.1 Flash 1017 / 2026-11-27
-Cache read: not reported
-Method: docs/token-count.md
-```
-
-Do not substitute the receipt size for the harness total. The form asks for the demo run; the receipt is a separate check.
+| Item | Compact Receipt | Workflow Footprint | Harness Session Total |
+|---|:---:|:---:|:---:|
+| Receipt summary + 5 integer estimates | Included | Included | Included |
+| `SKILL.md` body (on activation) | Excluded | Included | Included |
+| Full artifact JSON / CLI stderr summaries read by model | Excluded | Only read fields | Included |
+| System prompt, tool call arguments, model replies, retries | Excluded | Excluded | Included |
+| Cache-read / cache-write tokens | Excluded | Excluded | Report separately |
+| Unopened repo files, Flagsmith logs, Docker builds, browser UI | Excluded | Excluded | Excluded |

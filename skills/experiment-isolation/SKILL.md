@@ -6,115 +6,73 @@ metadata: {"repository": "https://github.com/pranavk429/experiment-isolation"}
 
 # Experiment Isolation
 
-Before you run another experiment, prove its audience is disjoint from experiments already launched, or make it disjoint with explicit human approval. The engine samples identities and computes enrollment; draft enrollment is labeled projected, not measured. This skill only orchestrates the CLI.
+Prove an experiment's audience is disjoint from active tests before launch, or isolate colliding drafts with human approval. The engine samples synthetic identities, evaluates flags, computes overlap, and labels draft enrollment `projected` (`measured` for started tests).
 
 ## When to use
 
-- Before you run another experiment in one Flagsmith environment.
-- Suspected overlapping experiments, experiment collision, or audience overlap.
-- You need mutual exclusion without percentage splits.
-
-Do not use this for post-launch analysis, and never to modify running experiments.
+- Before running another experiment, on suspected overlapping experiments, experiment collision, or audience overlap, or for mutual exclusion without `PERCENTAGE_SPLIT`.
+- Not for post-launch analysis or modifying running/paused experiments.
 
 ## Safety rules
 
-- **Read-only by default.** `audit` and `plan` never change experiments, segments, rollouts, or status. Audit persists traits on synthetic identities for measurement only.
-- **Never modify running experiments.** Apply only to pre-launch drafts (`status: created`). Experiments already running or paused are refused with exit 10; the operator must complete/delete and recreate them. Pausing does not free a started experiment, so do not pause or patch it as an isolation step.
-- **Approval token required.** `apply` needs the exact approval token (`approval_token` in the current `plan.json`, `iso-<8 hex>`) and an explicit human yes for that plan. Never invent, reuse, or silently edit a token.
-- **Roll back after any partial failure.** Use the engine-owned rollback, never a hand-written `flagsmith api` recipe:
+- **Read-only by default.** `audit` and `plan` never mutate experiments, segments, rollouts, or status (`audit` persists synthetic traits only).
+- **Never modify running experiments.** Apply touches `status: created` drafts only; running/paused tests exit 10. Ignore pause-to-isolate suggestions—paused audiences are immutable; the only paths are pre-launch isolation or complete/delete + recreate.
+- **Approval token.** `apply` requires exact `approval_token` (`iso-<8 hex>`) from `plan.json` and human approval; it is a confirmation string (safe to display), never invent/edit/reuse tokens.
+- **Engine rollback.** Never hand-write `flagsmith api` or `curl`/HTTP recipes; run `python3 -m engine.cli rollback --apply apply.json --out rollback.json` (or `bash scripts/run.sh rollback ...`). If `rollback.json` reports `requires_recreate`, report the started test was deleted and recreated as a draft—never claim live rollback.
+- **Local/disposable & secrets.** Use `DEV_ENV_KEY` or `FLAGSMITH_ENVIRONMENT_KEY`, never production/Cloud (`ISO_ALLOW_REMOTE=1` for disposable hosts only). Never print API keys or environment keys.
+- **Synthetic & JSON rules.** Samples are synthetic, traits persist, and projected/measured counts are not real traffic. Keep raw JSON on disk; never dump payloads (`references/safety.md`).
 
-  ```sh
-  python3 -m engine.cli rollback --apply apply.json --out rollback.json
-  ```
+## Setup and execution
 
-  If `rollback.json` reports `requires_recreate`, say the started experiment must be completed/deleted and recreated. Do not claim a live rollback.
-- **Local/development only.** Use `$DEV_ENV_KEY`; never production or Cloud. Never print API keys or environment keys. The approval token is a short confirmation string, not a secret, and is safe to display.
-- **Disclose synthetic identities.** Samples are synthetic, their traits persist, and measured or projected enrollment is not real traffic. Use a disposable environment for demos.
-- Do not bypass the engine with raw `curl` or ad-hoc admin writes. Details: `references/safety.md`.
+`bash scripts/run.sh <subcommand> ...` runs standalone from an installed skill dir and writes `--out` to `$PWD`. With `pip install -e .`, `PYTHONPATH=skills/experiment-isolation/scripts`, or from repo root, `python3 -m engine.cli ...` also works.
 
-## Setup
+Env vars (exported or `FLAGSMITH_ENV_FILE=<path>`, e.g., `lab/.env`): `FLAGSMITH_API_URL`, `FLAGSMITH_API_KEY_<host>_<port>` or `FLAGSMITH_API_KEY`, `FLAGSMITH_PROJECT`, `DEV_ENV_KEY` or `FLAGSMITH_ENVIRONMENT_KEY`. Check CLI and `/health`: `bash scripts/check_env.sh` (presence only).
 
-Use the instance you intend; no path is assumed. Require `FLAGSMITH_API_URL`; a host-scoped `FLAGSMITH_API_KEY_<host>_<port>` (or `FLAGSMITH_API_KEY`); `FLAGSMITH_PROJECT`; and `FLAGSMITH_ENVIRONMENT` (lab `.env` may expose `FLAGSMITH_ENVIRONMENT_KEY`). Commands also need `DEV_ENV_KEY` or `--env`.
-
-From the repo root:
-
-```sh
-source ~/flagsmith-local/flagsmith.env   # research instance
-# source lab/.env                        # self-hosted lab
-export PATH="$HOME/.cache/fstools/node_modules/.bin:$PATH"
-bash skills/experiment-isolation/scripts/check_env.sh
-```
-
-`check_env.sh` reads exported variables or `FLAGSMITH_ENV_FILE=<path>`; it verifies the CLI and local `/health` without printing secrets.
+**CLI vs. HTTP:** Evaluation uses `flagsmith evaluate --persist --json`; `AdminAPI` and `EdgeAPI` use stdlib HTTP for status checks and read-back verification (never `flagsmith api`).
 
 ## Workflow
 
 ### 1. Audit (read-only)
 
 ```sh
-python3 -m engine.cli audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
+bash scripts/run.sh audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
 ```
 
-Audit exit 10 = collision: read `audit.json` and continue to plan. If `verdict` is `clear` or `none`, report and stop.
+Exit 10 = collision: read `verdict`, `collisions`, `jaccard`/`shared`/`verdict`, and `basis` (`projected` drafts, `measured` otherwise), then continue to `plan`. `clear`/`none` (exit 0) -> report and stop.
 
-Read only `verdict`, `collisions`, and each overlap's `jaccard`, `shared`, and `verdict`; note each experiment's `basis` (`projected` for drafts, `measured` otherwise). Keep raw JSON on disk; never dump it.
-
-### 2. Plan
+### 2. Plan (read-only GETs)
 
 ```sh
-python3 -m engine.cli plan --audit audit.json --out plan.json
+bash scripts/run.sh plan --audit audit.json --out plan.json
 ```
 
-Plan does read-only GETs, not offline. Exit 10 = infeasible or deferred: report `notes` and stop. If a note suggests pausing, ignore it: paused experiments cannot change audience. The only paths are pre-launch isolation or complete/delete + recreate. Otherwise show the bucket ranges, audience changes, `rollback`, and `approval_token`; ask for explicit approval. Ranges cover 0-99.
+Read-only GETs (not offline). Exit 10 = infeasible/deferred: report `notes` and stop. Shared non-empty segment targeting (e.g., `us_mobile`) composes with `flagsmith_experiment_bucket` (`exp_iso_<segment>_<lo>_<hi>`) to preserve audience targeting. Show 0-99 ranges, audience changes, `rollback`, and `approval_token`; get approval.
 
 ### 3. Apply (after approval)
 
 ```sh
-python3 -m engine.cli apply --plan plan.json --approve "<approval-token>" --out apply.json
+bash scripts/run.sh apply --plan plan.json --approve "<approval-token>" --out apply.json
 ```
 
-Use the exact token. Exit 10 = refusal or approval failure: stop and report. Exit 20 = error: stop and roll back if anything changed. Never rerun with an edited plan.
+Exact token required. Exit 10 = refusal/approval failure -> stop. Exit 20 = error -> stop and roll back if changed. Never rerun an edited plan.
 
 ### 4. Verify
 
 ```sh
-python3 -m engine.cli verify --plan plan.json --samples 500 --workers 2 --out verify.json
+bash scripts/run.sh verify --plan plan.json --samples 500 --workers 2 --out verify.json
 ```
 
-Use `--workers 2` for stability on the local instance; higher concurrency is optional. Success = exit 0, `pass: true`, and every pair verdict `isolated`. `isolated` is a verify verdict, never an audit verdict. Exit 10 or `pass: false` = residual overlap: stop, roll back, do not claim isolation.
+Use `--workers 2` locally. By default `verify` re-evaluates the paired 500-identity cohort (`iso_0001..iso_0500`) against live flags; pass `--sample-prefix` for a fresh uncached prefix. Success = exit 0, `pass: true`, every pair `isolated` (verify verdict, never an audit verdict). Exit 10 or `pass: false` = residual overlap -> stop, roll back, do not claim isolation.
 
 ### 5. Receipt
 
 ```sh
-python3 -m engine.cli receipt --audit audit.json --plan plan.json --apply apply.json --verify verify.json --out receipt.json
+bash scripts/run.sh receipt --audit audit.json --plan plan.json --apply apply.json --verify verify.json --out receipt.json
 ```
 
-Pass all four artifacts so the receipt includes audit, plan, apply, and verify token counts. Report only the receipt highlights: before/after verdict, sample size, changes, rollback, and token counts. The receipt is roughly 100-125 tokens depending on tokenizer; do not claim under 100. If you need a number:
+Pass all four artifacts for audit/plan/apply/verify token counts; report highlights only. Receipt is roughly 100-125 tokens (do not claim under 100); `python3 scripts/token_count.py receipt.json` prints one integer (`o200k_base` or `ceil(chars/4)`).
 
-```sh
-python3 skills/experiment-isolation/scripts/token_count.py receipt.json
-```
+## Exit codes & references
 
-It prints one integer: tiktoken (`o200k_base`) when installed, otherwise ceil(characters/4).
-
-## Installed-skill wrapper
-
-When copied to `~/.claude/skills/experiment-isolation`, use `scripts/run.sh` with the same arguments:
-
-```sh
-skills/experiment-isolation/scripts/run.sh audit --env "$DEV_ENV_KEY" --samples 500 --threshold 0.05 --out audit.json
-```
-
-It resolves the repo root from `EXPERIMENT_ISOLATION_ROOT`, script ancestry, or `$PWD`, then delegates to `python3 -m engine.cli "$@"`; no business logic.
-
-## References
-
-- `references/api.md` - endpoints, payloads, audience constraints, bucket rules, enrollment metadata.
-- `references/safety.md` - approval, refusal, rollback, synthetic-identity disclosure.
-- `references/troubleshooting.md` - verdicts, percentage-split, rollout, sample-size, missing-trait, and install errors.
-
-## Output and exit codes
-
-- Exit 0 success; 20 error. Audit 10 = collision, continue; plan/apply/verify/receipt 10 = stop (rollback after partial apply).
-- Read compact fields and the receipt, not raw API payloads. Keep JSON on disk.
-- Do not reimplement engine logic; the engine owns it.
+- Exit `0` success; `20` error; audit `10` = collision (continue); other `10` = stop (roll back after partial apply). Never reimplement engine logic.
+- `references/api.md`, `references/safety.md`, `references/troubleshooting.md`.
