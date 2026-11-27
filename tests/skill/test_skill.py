@@ -87,6 +87,10 @@ class SkillContentTests(unittest.TestCase):
         allowed = {"allowed-tools", "description", "license", "metadata", "name"}
         self.assertTrue(set(self.frontmatter).issubset(allowed), set(self.frontmatter))
         self.assertNotIn("compatibility", self.frontmatter)
+        self.assertIn(
+            "https://github.com/pranavk429/experiment-isolation",
+            self.frontmatter["metadata"],
+        )
 
     def test_name_matches_parent_directory(self):
         name = self.frontmatter["name"]

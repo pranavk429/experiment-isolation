@@ -46,7 +46,7 @@ Run `bash skills/experiment-isolation/scripts/check_env.sh` with `FLAGSMITH_ENV_
 
 ## "No module named engine" / wrapper cannot find repo root
 
-Run from the repository root or set `EXPERIMENT_ISOLATION_ROOT` to it. The wrapper needs the `engine/` package; copying the skill to `~/.claude/skills/` does not copy the engine. See `compatibility` in SKILL.md.
+Run from the repository root or set `EXPERIMENT_ISOLATION_ROOT` to it. The wrapper needs the `engine/` package; copying the skill to `~/.claude/skills/` does not copy the engine. See the installed-skill wrapper section in SKILL.md.
 
 ## Approval token rejected
 

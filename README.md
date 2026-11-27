@@ -2,7 +2,7 @@
 
 **Outcome:** a Flagsmith Agent Skill that proves which experiments share users, refuses to launch the unsafe ones, and makes their audiences disjoint with one approved change — then verifies the result and emits a receipt.
 
-**Links:** Demo video: `TODO — add public YouTube/Loom URL` · [Lab](lab/) · [Track 3 answers](docs/submission.md#track-3--build-on-open-source-flagsmith) · [Track 4 answers](docs/submission.md#track-4--flagsmith-agent-skills) · [Demo script](docs/demo-script.md) · [Judging map](docs/judging-map.md)
+**Links:** Repository: https://github.com/pranavk429/experiment-isolation · Demo video: `TODO — add public YouTube/Loom URL` · [Lab](lab/) · [Track 3 answers](docs/submission.md#track-3--build-on-open-source-flagsmith) · [Track 4 answers](docs/submission.md#track-4--flagsmith-agent-skills) · [Demo script](docs/demo-script.md) · [Judging map](docs/judging-map.md)
 
 > **What it is:** an audit-and-apply loop for Flagsmith experiments, packaged as an Agent Skill and a stdlib CLI.
 >
@@ -71,7 +71,7 @@ Summary to stderr, JSON to stdout or `--out`. Exit codes: `0` clear/success, `10
 
 Beat sheet: [docs/demo-script.md](docs/demo-script.md); ~15 seconds on the problem, most on the product.
 
-1. **0:00–0:15 — Problem.** Current main-instance drafts, one audience; lab IDs differ. Contamination is invisible until results disagree.
+1. **0:00–0:15 — Problem.** Current main-instance drafts, one audience; lab IDs differ.
 2. **0:15–0:30.** Skill + engine + lab; audit, refuse, isolate, verify, receipt.
 3. **0:30–1:05 — Audit and matrix.** Run `audit`; show `exit=10` (collision is the gate signal), then the red N-way matrix.
 4. **1:05–1:25 — Plan and refusal.** Show the bucket segments and approval token; run `apply` with a wrong token, show `exit=10`, no changes.
@@ -92,6 +92,8 @@ Beat sheet: [docs/demo-script.md](docs/demo-script.md); ~15 seconds on the probl
 ### Engine
 
 ```sh
+git clone https://github.com/pranavk429/experiment-isolation
+cd experiment-isolation
 python3 -m engine.cli --help
 ```
 
@@ -140,7 +142,7 @@ Then ask: "Run another experiment on US mobile — check it does not overlap the
 bash lab/run.sh
 ```
 
-Starts Flagsmith `:8010`, storefront `:8020`, dashboard `:8022`. `bash lab/run.sh demo` runs the loop. Gate: `reset → demo → reset` = 100% → 0% → 100%, HTTP 200, no 409.
+Starts Flagsmith `:8010`, storefront `:8020`, dashboard `:8022`. Gate: `reset → demo → reset` = 100% → 0% → 100%, HTTP 200, no 409.
 
 ## Results and evidence
 

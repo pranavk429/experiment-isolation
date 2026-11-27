@@ -1,6 +1,7 @@
 ---
 name: experiment-isolation
 description: Prevent overlapping A/B experiments from contaminating each other. Use before you run another experiment, or when you suspect overlapping experiments, an experiment collision, or audience overlap. Plans mutual exclusion with deterministic bucket segments, applies only with an approval token, verifies zero overlap, and helps you isolate experiments in a local Flagsmith environment.
+metadata: {"repository": "https://github.com/pranavk429/experiment-isolation"}
 ---
 
 # Experiment Isolation
